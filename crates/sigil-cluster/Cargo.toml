@@ -1,0 +1,14 @@
+[package]
+name = "sigil-cluster"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Roles, transport abstraction, Raft catalog (DESIGN section 4)"
+
+[dependencies]
+sigil-core = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

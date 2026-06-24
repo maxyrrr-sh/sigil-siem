@@ -1,0 +1,32 @@
+[package]
+name = "sigil-cli"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Sigil SIEM command-line entrypoint (the `sigil` binary)"
+
+[[bin]]
+name = "sigil"
+path = "src/main.rs"
+
+[dependencies]
+sigil-core = { workspace = true }
+sigil-config = { workspace = true }
+sigil-ingest = { workspace = true }
+sigil-normalize = { workspace = true }
+sigil-index = { workspace = true }
+sigil-api = { workspace = true }
+sigil-sigma = { workspace = true }
+sigil-correlate = { workspace = true }
+sigil-cluster = { workspace = true }
+sigil-plugin-wasm = { workspace = true }
+sigil-eval = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

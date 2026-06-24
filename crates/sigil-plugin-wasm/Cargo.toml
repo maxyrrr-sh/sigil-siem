@@ -1,0 +1,19 @@
+[package]
+name = "sigil-plugin-wasm"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "WASM component host (wasmtime) + WIT (DESIGN section 12)"
+
+[dependencies]
+sigil-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The wasmtime runtime is feature-gated so consumers that only need manifest +
+# capability checking (e.g. the CLI) don't pull in the full engine.
+wasmtime = { version = "46", optional = true }
+wat = { version = "1", optional = true }
+
+[features]
+default = ["runtime"]
+runtime = ["dep:wasmtime", "dep:wat"]

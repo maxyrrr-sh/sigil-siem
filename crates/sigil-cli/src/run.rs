@@ -1,0 +1,572 @@
+//! The Phase 0–1 runtime: build a live pipeline from config and run it
+//! (ingest → decode → normalize → index + Sigma detection), serving the
+//! read-only query/alert API alongside. Also hosts `replay`, a deterministic
+//! file-driven path used for demos and tests (DESIGN §3 hot path, §5, §8).
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Duration;
+
+use sigil_api::AlertStore;
+use sigil_cluster::{Role, RoleSet};
+use sigil_config::{Config, InputConfig};
+use sigil_core::{Alert, Codec, Event, Result};
+use sigil_correlate::{
+    build_campaigns, build_incident, BeamSearchSelector, CampaignCandidate, CampaignConfig,
+    CausalConfig, HashingEmbedder, Incident,
+};
+use sigil_index::{parse_duration_micros, Analytics, ColumnarStore, EventIndex};
+use sigil_ingest::{build_codec, spawn_syslog_tcp, spawn_syslog_udp, FileTailer, TemplateMiner};
+use sigil_normalize::Normalizer;
+use sigil_sigma::SigmaEngine;
+use tokio::sync::mpsc;
+
+use crate::output::Outputs;
+
+/// Default tenant until multi-tenant routing exists.
+const TENANT: &str = "default";
+/// Roll the cold-tier buffer into a Parquet segment at this many events.
+const ROLL_MAX: usize = 2000;
+
+/// A raw, undecoded frame flowing from an input toward the pipeline.
+struct RawFrame {
+    codec_kind: String,
+    should_index: bool,
+    should_sigma: bool,
+    bytes: Vec<u8>,
+}
+
+/// Run a node from a config file, serving the API on `api_addr`.
+pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
+    let (cfg, report) = Config::load_and_validate(config_path)?;
+    for w in &report.warnings {
+        tracing::warn!("{w}");
+    }
+    if !report.ok() {
+        for e in &report.errors {
+            tracing::error!("{e}");
+        }
+        return Err(sigil_core::Error::Config(format!(
+            "{} validation error(s); fix the config before running",
+            report.errors.len()
+        )));
+    }
+
+    let index = Arc::new(EventIndex::open(cfg.index.resolved_path())?);
+    let columnar = ColumnarStore::open(
+        cfg.index.resolved_cold_path(),
+        cfg.index.resolved_catalog_path(),
+    )?;
+    let analytics = Analytics::new(cfg.index.resolved_cold_path());
+    let retention_micros = parse_duration_micros(&cfg.index.retention.cold);
+    let normalizer = Normalizer::new(TENANT);
+    let alerts = AlertStore::default();
+    let outputs = Outputs::new(&cfg.sigma.outputs);
+    let engine = build_engine(&cfg)?;
+
+    // Resolve this node's roles (DESIGN §4.1). Monolith = all roles.
+    let (roles, unknown) = RoleSet::from_targets(&cfg.cluster.targets);
+    for u in &unknown {
+        tracing::warn!("unknown cluster target `{u}`; ignoring");
+    }
+    let run_index = roles.runs(Role::Index);
+    let run_query = roles.runs(Role::Query);
+    let active: Vec<&str> = roles.roles().iter().map(|r| r.as_str()).collect();
+    tracing::info!(roles = ?active, "active roles");
+
+    let index_sources = sources_routed_to(&cfg, "index");
+    let sigma_sources = sources_routed_to(&cfg, "sigma");
+    let sigma_active = cfg.sigma.enabled && !engine.is_empty();
+
+    let (tx, mut rx) = mpsc::channel::<RawFrame>(8192);
+
+    // Spawn an input task per configured input. Indexing/detection only run if
+    // this node holds the `index` role.
+    for input in &cfg.inputs {
+        let should_index =
+            run_index && (index_sources.is_empty() || index_sources.contains(&input.id));
+        let should_sigma = run_index && sigma_active && sigma_sources.contains(&input.id);
+        match input.kind.as_str() {
+            "file" => spawn_file_input(input, should_index, should_sigma, tx.clone()),
+            "syslog" => spawn_syslog_input(input, should_index, should_sigma, tx.clone()),
+            other => {
+                tracing::warn!(input = %input.id, kind = %other, "input kind not implemented; skipping")
+            }
+        }
+    }
+    drop(tx); // only input tasks hold senders now
+
+    // Serve the query/alert/analytics API only if this node holds `query`.
+    if run_query {
+        let index = index.clone();
+        let alerts = alerts.clone();
+        let analytics = analytics.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sigil_api::serve(&api_addr, index, alerts, analytics).await {
+                tracing::error!(error = %e, "api server stopped");
+            }
+        });
+    } else {
+        tracing::info!("query role inactive; API not served");
+    }
+
+    tracing::info!(
+        index = %cfg.index.resolved_path(),
+        cold = %cfg.index.resolved_cold_path(),
+        rules = engine.len(),
+        "node running; Ctrl-C to stop"
+    );
+
+    // Consume frames. Hot (Tantivy) commits every second; cold (Parquet)
+    // segments roll over by size or every 10s; retention runs every 60s.
+    let mut codecs = CodecCache::default();
+    let mut miner = TemplateMiner::default();
+    let mut buffer: Vec<Event> = Vec::new();
+    let mut commit = tokio::time::interval(Duration::from_millis(1000));
+    let mut rollover = tokio::time::interval(Duration::from_secs(10));
+    let mut retention = tokio::time::interval(Duration::from_secs(60));
+    let mut dirty = 0usize;
+    let mut interrupted = false;
+
+    loop {
+        tokio::select! {
+            frame = rx.recv() => {
+                match frame {
+                    Some(frame) => {
+                        for mut event in decode_normalize(&mut codecs, &normalizer, &frame)? {
+                            event.template_id = Some(miner.mine(&event.message).template_id);
+                            if frame.should_sigma {
+                                detect(&engine, &event, &alerts, &outputs).await;
+                            }
+                            if frame.should_index {
+                                index.add(&event)?;
+                                dirty += 1;
+                                buffer.push(event);
+                                if buffer.len() >= ROLL_MAX {
+                                    roll(&columnar, &mut buffer)?;
+                                }
+                            }
+                        }
+                    }
+                    None => break, // all inputs ended
+                }
+            }
+            _ = commit.tick() => {
+                if dirty > 0 {
+                    index.commit()?;
+                    tracing::debug!(committed = dirty, "flushed to hot index");
+                    dirty = 0;
+                }
+            }
+            _ = rollover.tick() => {
+                roll(&columnar, &mut buffer)?;
+            }
+            _ = retention.tick() => {
+                if let Some(max_age) = retention_micros {
+                    let dropped = columnar.enforce_retention(max_age)?;
+                    if dropped > 0 {
+                        tracing::info!(segments = dropped, "retention dropped expired cold segments");
+                    }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("shutdown signal received");
+                interrupted = true;
+                break;
+            }
+        }
+    }
+
+    index.commit()?;
+    roll(&columnar, &mut buffer)?;
+
+    // Inputs drained (e.g. none configured) but a query node should keep
+    // serving the API until interrupted.
+    if !interrupted && run_query {
+        tracing::info!("inputs drained; serving query API until Ctrl-C");
+        let _ = tokio::signal::ctrl_c().await;
+    }
+    tracing::info!(
+        events = index.count()?,
+        alerts = alerts.len(),
+        segments = columnar.segment_count(),
+        "stopped"
+    );
+    Ok(())
+}
+
+/// Flush the cold-tier buffer into a Parquet segment (no-op if empty).
+fn roll(store: &ColumnarStore, buffer: &mut Vec<Event>) -> Result<()> {
+    if buffer.is_empty() {
+        return Ok(());
+    }
+    let rows = buffer.len();
+    store.write_segment(buffer)?;
+    buffer.clear();
+    tracing::debug!(rows, "rolled cold segment");
+    Ok(())
+}
+
+/// Run the Sigma engine over one event, recording + emitting any alerts.
+async fn detect(engine: &SigmaEngine, event: &Event, store: &AlertStore, outputs: &Outputs) {
+    for alert in engine.eval(event) {
+        tracing::info!(
+            rule = %alert.rule_id,
+            technique = alert.technique.as_deref().unwrap_or("-"),
+            severity = ?alert.severity,
+            "ALERT"
+        );
+        store.push(alert.clone());
+        outputs.emit(&alert).await;
+    }
+}
+
+/// Decode + normalize one frame into events.
+fn decode_normalize(
+    codecs: &mut CodecCache,
+    normalizer: &Normalizer,
+    frame: &RawFrame,
+) -> Result<Vec<Event>> {
+    let codec = codecs.get(&frame.codec_kind);
+    let records = codec.decode(&frame.bytes)?;
+    Ok(records
+        .into_iter()
+        .map(|r| normalizer.normalize(r, &frame.codec_kind))
+        .collect())
+}
+
+/// Build the Sigma engine from config (loads `sigma.rules_dir` if set).
+fn build_engine(cfg: &Config) -> Result<SigmaEngine> {
+    if !cfg.sigma.enabled {
+        tracing::info!("sigma disabled in config");
+        return Ok(SigmaEngine::default());
+    }
+    let Some(dir) = &cfg.sigma.rules_dir else {
+        if !cfg.sigma.rulepacks.is_empty() {
+            tracing::warn!("sigma.rulepacks are not resolvable yet; set sigma.rules_dir");
+        }
+        return Ok(SigmaEngine::default());
+    };
+    let (engine, report) = SigmaEngine::load_dir(dir)?;
+    tracing::info!(loaded = report.loaded, failed = report.failed.len(), dir = %dir, "loaded Sigma rules");
+    for (path, err) in &report.failed {
+        tracing::warn!(rule = %path.display(), error = %err, "skipped rule");
+    }
+    Ok(engine)
+}
+
+/// Outcome of a `replay` run.
+pub struct ReplayOutcome {
+    pub events: usize,
+    pub alerts: Vec<Alert>,
+}
+
+/// Replay a file through the pipeline deterministically (no sockets): index
+/// every decoded line into the hot tier, roll the batch into a cold Parquet
+/// segment, and evaluate Sigma over it. Returns counts + alerts.
+pub fn replay_file(
+    index: &EventIndex,
+    columnar: &ColumnarStore,
+    normalizer: &Normalizer,
+    engine: &SigmaEngine,
+    path: &str,
+    codec_kind: &str,
+) -> Result<ReplayOutcome> {
+    let mut miner = TemplateMiner::default();
+    let events = decode_file(path, codec_kind, normalizer, &mut miner)?;
+    let alerts: Vec<Alert> = events.iter().flat_map(|e| engine.eval(e)).collect();
+    let n = events.len();
+    index.index_events(&events)?;
+    columnar.write_segment(&events)?;
+    Ok(ReplayOutcome { events: n, alerts })
+}
+
+/// Decode + normalize + template-mine every line of a file into events.
+fn decode_file(
+    path: &str,
+    codec_kind: &str,
+    normalizer: &Normalizer,
+    miner: &mut TemplateMiner,
+) -> Result<Vec<Event>> {
+    let codec = build_codec(codec_kind);
+    let content =
+        std::fs::read(path).map_err(|e| sigil_core::Error::Io(format!("reading {path}: {e}")))?;
+    let mut events = Vec::new();
+    for line in content.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        for record in codec.decode(line)? {
+            let mut event = normalizer.normalize(record, codec_kind);
+            event.template_id = Some(miner.mine(&event.message).template_id);
+            events.push(event);
+        }
+    }
+    Ok(events)
+}
+
+/// Full correlation analysis of a file (DESIGN §9): campaign candidates plus
+/// reconstructed incidents (kill-chains mapped to ATT&CK). The Sigma `engine`
+/// supplies technique tags for chain nodes.
+pub struct Analysis {
+    pub candidates: Vec<CampaignCandidate>,
+    pub incidents: Vec<Incident>,
+}
+
+pub fn analyze_file(
+    engine: &SigmaEngine,
+    normalizer: &Normalizer,
+    path: &str,
+    codec_kind: &str,
+    campaign_cfg: &CampaignConfig,
+    causal_cfg: &CausalConfig,
+) -> Result<Analysis> {
+    let mut miner = TemplateMiner::default();
+    let events = decode_file(path, codec_kind, normalizer, &mut miner)?;
+
+    // Technique tags from Sigma matches, keyed by event id.
+    let mut techniques: HashMap<String, String> = HashMap::new();
+    for e in &events {
+        for alert in engine.eval(e) {
+            if let Some(t) = alert.technique {
+                techniques.entry(e.id.clone()).or_insert(t);
+            }
+        }
+    }
+
+    let candidates = build_campaigns(&events, campaign_cfg, &HashingEmbedder::default());
+    let selector = BeamSearchSelector::default();
+    let incidents = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| build_incident(i, c, &events, &techniques, &selector, causal_cfg))
+        .collect();
+
+    Ok(Analysis {
+        candidates,
+        incidents,
+    })
+}
+
+/// Caches one codec instance per kind for the consumer loop.
+#[derive(Default)]
+struct CodecCache {
+    map: std::collections::HashMap<String, Box<dyn Codec + Send + Sync>>,
+}
+
+impl CodecCache {
+    fn get(&mut self, kind: &str) -> &(dyn Codec + Send + Sync) {
+        let boxed = self
+            .map
+            .entry(kind.to_string())
+            .or_insert_with(|| build_codec(kind));
+        &**boxed
+    }
+}
+
+fn sources_routed_to(cfg: &Config, sink: &str) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for p in &cfg.pipelines {
+        if p.route.iter().any(|r| r.to == sink) {
+            for from in &p.from {
+                set.insert(from.clone());
+            }
+        }
+    }
+    set
+}
+
+fn spawn_file_input(
+    input: &InputConfig,
+    should_index: bool,
+    should_sigma: bool,
+    tx: mpsc::Sender<RawFrame>,
+) {
+    let id = input.id.clone();
+    let codec_kind = input.codec.kind.clone();
+    let Some(path) = input.setting_str("path") else {
+        tracing::error!(input = %id, "file input missing `path`; skipping");
+        return;
+    };
+    tokio::spawn(async move {
+        let mut tailer = match FileTailer::open(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(input = %id, error = %e, "cannot open file input");
+                return;
+            }
+        };
+        tracing::info!(input = %id, %path, "file input started");
+        loop {
+            match tailer.poll_lines() {
+                Ok(lines) => {
+                    for bytes in lines {
+                        let frame = RawFrame {
+                            codec_kind: codec_kind.clone(),
+                            should_index,
+                            should_sigma,
+                            bytes,
+                        };
+                        if tx.send(frame).await.is_err() {
+                            return; // pipeline gone
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(input = %id, error = %e, "file poll error"),
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    });
+}
+
+fn spawn_syslog_input(
+    input: &InputConfig,
+    should_index: bool,
+    should_sigma: bool,
+    tx: mpsc::Sender<RawFrame>,
+) {
+    let id = input.id.clone();
+    let codec_kind = input.codec.kind.clone();
+    let Some(listen) = input.setting_str("listen") else {
+        tracing::error!(input = %id, "syslog input missing `listen`; skipping");
+        return;
+    };
+
+    // Inner channel carries raw datagrams/lines; a forwarder wraps them.
+    let (raw_tx, mut raw_rx) = mpsc::channel::<Vec<u8>>(4096);
+
+    {
+        let listen = listen.clone();
+        let raw_tx = raw_tx.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = spawn_syslog_udp(&listen, raw_tx).await {
+                tracing::error!(input = %id, error = %e, "udp listener failed");
+            }
+        });
+    }
+    {
+        let listen = listen.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = spawn_syslog_tcp(&listen, raw_tx).await {
+                tracing::error!(input = %id, error = %e, "tcp listener failed");
+            }
+        });
+    }
+
+    tokio::spawn(async move {
+        while let Some(bytes) = raw_rx.recv().await {
+            let frame = RawFrame {
+                codec_kind: codec_kind.clone(),
+                should_index,
+                should_sigma,
+                bytes,
+            };
+            if tx.send(frame).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    tracing::info!(input = %id, %listen, "syslog input started (udp+tcp)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sigil_index::SearchQuery;
+
+    const AUTH_LINES: &str =
+        "<34>Oct 11 22:14:15 web01 sshd: Failed password for invalid user admin from 10.0.0.9\n\
+         <38>Oct 11 22:14:20 web01 sshd: Accepted password for alice from 10.0.0.5\n";
+
+    fn store(dir: &std::path::Path) -> ColumnarStore {
+        ColumnarStore::open(dir.join("cold"), dir.join("catalog.json")).unwrap()
+    }
+
+    #[test]
+    fn replay_indexes_and_is_searchable() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("auth.log");
+        std::fs::write(&log, AUTH_LINES).unwrap();
+
+        let index = EventIndex::in_memory().unwrap();
+        let columnar = store(dir.path());
+        let normalizer = Normalizer::new("default");
+        let outcome = replay_file(
+            &index,
+            &columnar,
+            &normalizer,
+            &SigmaEngine::default(),
+            log.to_str().unwrap(),
+            "syslog",
+        )
+        .unwrap();
+        assert_eq!(outcome.events, 2);
+        assert!(outcome.alerts.is_empty()); // no rules loaded
+
+        let hits = index.search(&SearchQuery::new("admin", 10)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].actor.as_ref().unwrap().id, "admin");
+        // The same events landed in a cold segment.
+        assert_eq!(columnar.total_rows(), 2);
+    }
+
+    #[tokio::test]
+    async fn replay_then_analytics_sql() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("auth.log");
+        std::fs::write(&log, AUTH_LINES).unwrap();
+
+        let index = EventIndex::in_memory().unwrap();
+        let columnar = store(dir.path());
+        let normalizer = Normalizer::new("default");
+        replay_file(
+            &index,
+            &columnar,
+            &normalizer,
+            &SigmaEngine::default(),
+            log.to_str().unwrap(),
+            "syslog",
+        )
+        .unwrap();
+
+        // Analytical query over the cold tier.
+        let res = columnar
+            .sql("SELECT ocsf_class_name, count(*) AS n FROM events GROUP BY ocsf_class_name")
+            .await
+            .unwrap();
+        let total: i64 = res.rows.iter().map(|r| r["n"].as_i64().unwrap()).sum();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn replay_with_engine_produces_alerts() {
+        let (engine, report) = SigmaEngine::load_dir("../../configs/rules").unwrap();
+        assert!(report.loaded >= 1, "expected bundled rules to load");
+
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("auth.log");
+        std::fs::write(&log, AUTH_LINES).unwrap();
+
+        let index = EventIndex::in_memory().unwrap();
+        let columnar = store(dir.path());
+        let normalizer = Normalizer::new("default");
+        let outcome = replay_file(
+            &index,
+            &columnar,
+            &normalizer,
+            &engine,
+            log.to_str().unwrap(),
+            "syslog",
+        )
+        .unwrap();
+
+        // The failed-password line should trip the SSH brute-force rule.
+        assert!(outcome
+            .alerts
+            .iter()
+            .any(|a| a.technique.as_deref() == Some("T1110.001")));
+    }
+}

@@ -1,0 +1,14 @@
+[package]
+name = "sigil-core"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Foundational types and plugin traits for Sigil SIEM"
+
+# Keep this crate dependency-light: it is the root of the dependency graph.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+time = { workspace = true }

@@ -1,0 +1,23 @@
+// WIT interface for Sigil WASM processor plugins (DESIGN §12.2).
+//
+// Phase 5 runs core WASM modules through the host; these Component Model
+// bindings (via wit-bindgen) are the next step toward language-independent,
+// hot-loadable community plugins.
+
+package sigil:plugin@0.1.0;
+
+interface processor {
+  record event {
+    id: string,
+    ts: u64,
+    ocsf-class: u32,
+    fields: list<tuple<string, string>>,
+  }
+
+  // Map / filter / enrich one event into zero or more events.
+  process: func(e: event) -> result<list<event>, string>;
+}
+
+world sigil-processor {
+  export processor;
+}

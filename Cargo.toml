@@ -1,0 +1,85 @@
+# Sigil SIEM — Cargo workspace.
+# Full architecture: docs/DESIGN.md
+[workspace]
+resolver = "2"
+members = [
+    "crates/sigil-core",
+    "crates/sigil-ingest",
+    "crates/sigil-normalize",
+    "crates/sigil-index",
+    "crates/sigil-sigma",
+    "crates/sigil-graph",
+    "crates/sigil-correlate",
+    "crates/sigil-correlate-rl",
+    "crates/sigil-plugin-wasm",
+    "crates/sigil-cluster",
+    "crates/sigil-config",
+    "crates/sigil-api",
+    "crates/sigil-eval",
+    "crates/sigil-cli",
+]
+
+# `sigil-correlate-rl` is an OPTIONAL module (GRAIN-style RL path selection,
+# DESIGN §9.5). It is intentionally excluded from the default build so the core
+# never depends on it. Build it explicitly:  cargo build -p sigil-correlate-rl
+default-members = [
+    "crates/sigil-core",
+    "crates/sigil-ingest",
+    "crates/sigil-normalize",
+    "crates/sigil-index",
+    "crates/sigil-sigma",
+    "crates/sigil-graph",
+    "crates/sigil-correlate",
+    "crates/sigil-plugin-wasm",
+    "crates/sigil-cluster",
+    "crates/sigil-config",
+    "crates/sigil-api",
+    "crates/sigil-eval",
+    "crates/sigil-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+repository = "https://github.com/your-org/sigil-siem"
+
+# Shared dependency versions for the whole workspace. Individual crates opt in
+# with `dep.workspace = true` so versions stay unified (DESIGN §16 stack).
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "1"
+anyhow = "1"
+ulid = { version = "1", features = ["serde"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+axum = "0.7"
+tantivy = "0.22"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+datafusion = "54"
+petgraph = "0.6"
+# internal
+sigil-core = { path = "crates/sigil-core" }
+sigil-config = { path = "crates/sigil-config" }
+sigil-ingest = { path = "crates/sigil-ingest" }
+sigil-normalize = { path = "crates/sigil-normalize" }
+sigil-index = { path = "crates/sigil-index" }
+sigil-api = { path = "crates/sigil-api" }
+sigil-sigma = { path = "crates/sigil-sigma" }
+sigil-graph = { path = "crates/sigil-graph" }
+sigil-correlate = { path = "crates/sigil-correlate" }
+sigil-cluster = { path = "crates/sigil-cluster" }
+sigil-plugin-wasm = { path = "crates/sigil-plugin-wasm", default-features = false }
+sigil-eval = { path = "crates/sigil-eval" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

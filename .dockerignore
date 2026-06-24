@@ -1,0 +1,28 @@
+# Rust build artifacts (huge) — rebuilt inside the image.
+/target
+**/target
+
+# Runtime data + logs
+/data
+**/*.log
+
+# VCS / editor / OS
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+**/*.rs.bk
+
+# Node / frontend
+**/node_modules
+frontend/dist
+
+# Python
+**/__pycache__
+**/*.py[cod]
+ml-sidecar/.venv
+ml-sidecar/**/*.egg-info
+
+# Misc
+sigil-snapshot-*.zip

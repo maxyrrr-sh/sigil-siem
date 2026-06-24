@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sigil SIEM</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background:#0e1116; color:#d7dce3; }
+  header { padding: 14px 20px; background:#161b22; border-bottom:1px solid #2a313c; }
+  header b { color:#f0f3f7; font-size:16px; }
+  header span { color:#8b95a3; }
+  main { padding: 20px; display:grid; gap:20px; grid-template-columns: 1fr; max-width: 1100px; }
+  .card { background:#161b22; border:1px solid #2a313c; border-radius:8px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:#8b95a3; }
+  .stats { display:flex; gap:32px; }
+  .stat .n { font-size:28px; font-weight:600; color:#f0f3f7; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #222831; font-size:13px; }
+  th { color:#8b95a3; font-weight:500; }
+  .sev-critical,.sev-high { color:#ff6b6b; } .sev-medium { color:#ffb454; } .sev-low,.sev-informational { color:#8b95a3; }
+  .pill { background:#22303c; color:#9ad; border-radius:10px; padding:1px 8px; font-size:12px; }
+  text { fill:#d7dce3; font:12px system-ui; } .tactic { fill:#8b95a3; font-size:10px; text-transform:uppercase; }
+  .muted { color:#6b7585; }
+  button { background:#22303c; color:#d7dce3; border:1px solid #2a313c; border-radius:6px; padding:4px 10px; cursor:pointer; }
+</style>
+
+<header>
+  <b>Sigil SIEM</b> &nbsp;<span>semantic + causal correlation · attack-graph triage</span>
+  <button style="float:right" onclick="refresh()">Refresh</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Overview</h2>
+    <div class="stats">
+      <div class="stat"><div class="n" id="events">–</div><div class="muted">events</div></div>
+      <div class="stat"><div class="n" id="alerts">–</div><div class="muted">alerts</div></div>
+      <div class="stat"><div class="n" id="status">–</div><div class="muted">status</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Reconstructed attack graph</h2>
+    <svg id="graph" viewBox="0 0 1040 140" width="100%" height="140"></svg>
+    <div class="muted" id="graph-note">sample incident — run <code>sigil correlate</code> to reconstruct from your data</div>
+  </div>
+
+  <div class="card">
+    <h2>Recent alerts</h2>
+    <table><thead><tr><th>rule</th><th>title</th><th>severity</th><th>ATT&CK</th></tr></thead>
+    <tbody id="alert-rows"><tr><td colspan="4" class="muted">loading…</td></tr></tbody></table>
+  </div>
+</main>
+
+<script>
+// A sample reconstructed incident; the same shape `sigil correlate` produces.
+const SAMPLE = [
+  { tactic:"credential-access",   label:"auth user:mallory",   technique:"T1110.001" },
+  { tactic:"privilege-escalation",label:"process sudo",        technique:"T1548.003" },
+  { tactic:"credential-access",   label:"file /etc/shadow",    technique:"T1003.008" },
+  { tactic:"command-and-control", label:"network 9.9.9.9",     technique:"T1041" },
+];
+
+function drawGraph(steps) {
+  const svg = document.getElementById("graph");
+  svg.innerHTML = "";
+  const w = 230, h = 56, gap = 30, y = 50;
+  steps.forEach((s, i) => {
+    const x = 10 + i * (w + gap);
+    if (i > 0) {
+      const px = x - gap;
+      svg.innerHTML += `<line x1="${px}" y1="${y+h/2}" x2="${x}" y2="${y+h/2}" stroke="#3a4756" stroke-width="2" marker-end="url(#arrow)"/>`;
+    }
+    svg.innerHTML += `
+      <text class="tactic" x="${x}" y="${y-8}">${s.tactic}</text>
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#1c2530" stroke="#3a4756"/>
+      <text x="${x+12}" y="${y+22}">${s.label}</text>
+      <text x="${x+12}" y="${y+42}" fill="#9ad">${s.technique||""}</text>`;
+  });
+  svg.innerHTML = `<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 z" fill="#3a4756"/></marker></defs>` + svg.innerHTML;
+}
+
+async function refresh() {
+  try {
+    const c = await (await fetch("/count")).json();
+    document.getElementById("events").textContent = c.events ?? "–";
+    document.getElementById("alerts").textContent = c.alerts ?? "–";
+    document.getElementById("status").textContent = "ok";
+  } catch { document.getElementById("status").textContent = "offline"; }
+
+  try {
+    const a = await (await fetch("/alerts?limit=25")).json();
+    const rows = (a.alerts||[]).map(x => `<tr>
+      <td>${x.rule_id||""}</td><td>${x.title||""}</td>
+      <td class="sev-${x.severity}">${x.severity||""}</td>
+      <td>${x.technique ? `<span class="pill">${x.technique}</span>` : ""}</td></tr>`).join("");
+    document.getElementById("alert-rows").innerHTML =
+      rows || `<tr><td colspan="4" class="muted">no alerts yet</td></tr>`;
+  } catch {}
+}
+
+drawGraph(SAMPLE);
+refresh();
+</script>

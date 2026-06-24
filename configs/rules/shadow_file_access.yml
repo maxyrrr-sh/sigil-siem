@@ -1,0 +1,14 @@
+title: Read Access To /etc/shadow
+id: 7f3a9e21-shadow-read
+status: experimental
+description: A process accessed /etc/shadow, where Linux password hashes live.
+logsource:
+  product: linux
+detection:
+  keywords:
+    - '/etc/shadow'
+  condition: keywords
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1003.008

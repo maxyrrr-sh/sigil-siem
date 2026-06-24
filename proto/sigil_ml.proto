@@ -1,0 +1,21 @@
+syntax = "proto3";
+package sigil.ml.v1;
+
+// Sigil ML sidecar service (scaffold). See docs/DESIGN.md §9.9.
+// Bulk event/tensor payloads travel over Arrow Flight; this gRPC surface is
+// for control + small requests.
+service MlSidecar {
+  rpc Health(HealthRequest) returns (HealthReply);
+  rpc Embed(EmbedRequest) returns (EmbedReply);   // events -> vectors
+  rpc Score(ScoreRequest) returns (ScoreReply);   // subgraph -> scores
+}
+
+message HealthRequest {}
+message HealthReply { bool ok = 1; string version = 2; }
+
+message EmbedRequest { repeated string event_json = 1; }
+message EmbedReply { repeated FloatVector vectors = 1; }
+message FloatVector { repeated float values = 1; }
+
+message ScoreRequest { string subgraph_json = 1; }
+message ScoreReply { float anomaly = 1; float causal = 2; }

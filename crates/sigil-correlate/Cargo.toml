@@ -1,0 +1,13 @@
+[package]
+name = "sigil-correlate"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Semantic + causal correlation orchestrator (DESIGN section 9)"
+
+[dependencies]
+sigil-core = { workspace = true }
+sigil-graph = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

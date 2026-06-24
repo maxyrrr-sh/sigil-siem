@@ -1,0 +1,18 @@
+{"host":"db01","username":"deploy","src_ip":"10.0.2.20","message":"Accepted publickey for deploy from 10.0.2.20"}
+{"host":"cdn04","method":"GET","url":"/index.html","status_code":200,"message":"GET /index.html"}
+{"host":"app02","process":"systemctl","cmd":"systemctl restart app","message":"systemctl restart app"}
+{"host":"db01","src_ip":"10.0.2.21","dst_ip":"10.0.2.5","dst_port":5432,"message":"db connection established"}
+{"host":"web01","app":"sshd","username":"mallory","src_ip":"203.0.113.7","message":"Failed password for mallory from 203.0.113.7 port 40221 ssh2"}
+{"host":"cdn04","method":"GET","url":"/assets/app.js","status_code":200,"message":"GET /assets/app.js"}
+{"host":"web01","app":"sshd","username":"mallory","src_ip":"203.0.113.7","message":"Failed password for mallory from 203.0.113.7 port 40222 ssh2"}
+{"host":"mail03","eventName":"SendEmail","message":"queued message for delivery"}
+{"host":"web01","app":"sshd","username":"mallory","src_ip":"203.0.113.7","message":"Accepted password for mallory from 203.0.113.7 port 40225 ssh2"}
+{"host":"app02","method":"POST","url":"/api/deploy","status_code":201,"message":"POST /api/deploy"}
+{"host":"web01","app":"sudo","process":"sudo","cmd":"/bin/bash","message":"mallory : TTY=pts/0 ; USER=root ; COMMAND=/bin/bash"}
+{"host":"db01","username":"backup","src_ip":"10.0.2.21","message":"Accepted password for backup from 10.0.2.21"}
+{"host":"web01","process":"cat","cmd":"cat /etc/shadow","message":"cat /etc/shadow"}
+{"host":"cdn04","method":"GET","url":"/favicon.ico","status_code":404,"message":"GET /favicon.ico"}
+{"host":"web01","method":"GET","url":"/uploads/shell.php","status_code":200,"message":"GET /uploads/shell.php?cmd=whoami"}
+{"host":"mail03","eventName":"SendEmail","message":"queued message for delivery"}
+{"host":"web01","src_ip":"web01","dst_ip":"203.0.113.7","dst_port":4444,"message":"outbound connection to 203.0.113.7:4444"}
+{"host":"db01","process":"pg_dump","cmd":"pg_dump prod","message":"nightly backup pg_dump prod"}

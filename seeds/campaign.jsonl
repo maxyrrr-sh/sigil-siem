@@ -1,0 +1,6 @@
+{"host":"web01","app":"sshd","username":"mallory","src_ip":"203.0.113.7","message":"Failed password for mallory from 203.0.113.7 port 40223 ssh2"}
+{"host":"web01","app":"sshd","username":"mallory","src_ip":"203.0.113.7","message":"Accepted password for mallory from 203.0.113.7 port 40225 ssh2"}
+{"host":"web01","app":"sudo","process":"sudo","cmd":"/bin/bash","message":"mallory : TTY=pts/0 ; USER=root ; COMMAND=/bin/bash"}
+{"host":"web01","process":"cat","cmd":"cat /etc/shadow","message":"cat /etc/shadow"}
+{"host":"web01","method":"GET","url":"/uploads/shell.php","status_code":200,"message":"GET /uploads/shell.php?cmd=whoami"}
+{"host":"web01","src_ip":"web01","dst_ip":"203.0.113.7","dst_port":4444,"message":"outbound connection to 203.0.113.7:4444"}

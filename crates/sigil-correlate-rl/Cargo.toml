@@ -1,0 +1,11 @@
+[package]
+name = "sigil-correlate-rl"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Optional module: RL causal-path selection, GRAIN-style (DESIGN section 9.5)"
+
+# OPTIONAL module — intentionally NOT in workspace default-members. Nothing in
+# the default build may depend on this crate (DESIGN §19 ADR-5).
+[dependencies]
+sigil-core = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "sigil-api"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Query API and query language (DESIGN section 16/17)"
+
+[dependencies]
+sigil-core = { workspace = true }
+sigil-index = { workspace = true }
+sigil-correlate = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,10 @@
+[package]
+name = "sigil-eval"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Evaluation harness + metrics for the correlation feature (DESIGN section 11)"
+
+[dependencies]
+sigil-core = { workspace = true }
+sigil-correlate = { workspace = true }

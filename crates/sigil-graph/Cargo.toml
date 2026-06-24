@@ -1,0 +1,10 @@
+[package]
+name = "sigil-graph"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Provenance / causal graph store (DESIGN section 9.4)"
+
+[dependencies]
+sigil-core = { workspace = true }
+petgraph = { workspace = true }

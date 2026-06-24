@@ -1,0 +1,25 @@
+[project]
+name = "sigil-ml-sidecar"
+version = "0.0.0"
+description = "Sigil SIEM ML sidecar: embeddings, vector index, GNN/causal scoring"
+requires-python = ">=3.10"
+dependencies = [
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
+]
+
+[project.optional-dependencies]
+# The real semantic embedder + GNN (Phase 4). Without these the sidecar falls
+# back to the deterministic hashing embedder, so it runs with no model download.
+model = [
+    "sentence-transformers",
+    "torch",
+]
+flight = ["pyarrow"]
+
+[project.scripts]
+sigil-sidecar = "sidecar.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,72 @@
+# Sigil SIEM - example declarative configuration.
+# Validate with:  sigil config validate ./configs/sigil.yaml
+# Reference: docs/DESIGN.md §13.
+version: 1
+
+cluster:
+  targets: [all]                 # or e.g. [ingest, index] on this node
+  object_store:
+    kind: s3
+    bucket: sigil-cold
+    endpoint: http://minio:9000
+  transport:
+    kind: redpanda               # default distributed bus (Kafka protocol)
+    brokers: ["redpanda:9092"]
+    # kind: inproc               # monolith mode needs no broker at all
+
+inputs:
+  - id: syslog_main
+    type: syslog
+    listen: 0.0.0.0:5514
+    codec: { type: syslog, rfc: 5424 }
+
+  - id: gcp_audit
+    type: gcp_pubsub             # Cloud Logging -> Log Router sink -> Pub/Sub
+    project: my-project
+    subscription: sigil-logs-sub
+    codec: { type: json }
+
+  # AWS EventBridge is a router: consume via one of its targets (SQS/Kinesis).
+  - id: aws_events
+    type: sqs
+    queue_url: https://sqs.eu-central-1.amazonaws.com/123456789012/sigil-events
+    codec: { type: json }
+
+pipelines:
+  - id: default
+    from: [syslog_main, gcp_audit, aws_events]
+    steps:
+      - normalize: { schema: ocsf }
+      - enrich: [geoip, threat_intel]
+    route:
+      - to: index
+      - to: sigma
+      - to: correlation
+
+index:
+  retention: { hot: 7d, warm: 30d, cold: 365d }
+
+sigma:
+  enabled: true
+  rules_dir: configs/rules           # load Sigma rule YAML from here (recursive)
+  rulepacks: ["sigmahq/windows", "local/custom"]   # named packs: not resolvable yet
+  outputs:
+    file: data/alerts.jsonl          # append matched alerts as JSON lines
+    # webhook: https://hooks.example.com/sigil
+
+correlation:
+  enabled: true
+  sidecar: { endpoint: grpc://ml-sidecar:50051, transport: arrow-flight }
+  embedder: { model: securebert-logs, version: 1.2 }
+  graph: { cross_domain: true, window: 30m }
+  gnn: { model: graphsage, anomaly: masked-autoencoder }
+  path_selector: { strategy: beam-search }   # default chain assembly
+  modules:
+    - { name: rl-grain, enabled: false }     # optional RL module (GRAIN) -> strategy: rl
+  attribution: { attack_mapping: true, actor_level: false }
+
+plugins:
+  - name: my_custom_parser
+    kind: wasm
+    path: ./plugins/my_parser.wasm
+    capabilities: ["read:field:message"]
