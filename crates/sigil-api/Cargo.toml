@@ -9,8 +9,23 @@ description = "Query API and query language (DESIGN section 16/17)"
 sigil-core = { workspace = true }
 sigil-index = { workspace = true }
 sigil-correlate = { workspace = true }
+sigil-sigma = { workspace = true }
+sigil-eval = { workspace = true }
+sigil-config = { workspace = true }
+sigil-store = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+ulid = { workspace = true }
+jsonwebtoken = { workspace = true }
+argon2 = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

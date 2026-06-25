@@ -18,6 +18,6 @@ pub mod harness;
 pub mod matcher;
 pub mod rule;
 
-pub use engine::{CompiledRule, LoadReport, SigmaEngine};
+pub use engine::{CompiledRule, LoadReport, RuleInfo, SigmaEngine};
 pub use harness::{event_from_fields, run_cases, TestCase};
 pub use rule::{LogSource, SigmaRule};

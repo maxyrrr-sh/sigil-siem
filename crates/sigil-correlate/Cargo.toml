@@ -5,9 +5,16 @@ edition = "2021"
 publish = false
 description = "Semantic + causal correlation orchestrator (DESIGN section 9)"
 
+[features]
+# Use the Python ML sidecar (SecureBERT embeddings) instead of the offline
+# HashingEmbedder. Off by default so the standard build needs no sidecar.
+sidecar = ["dep:sigil-ml-client", "dep:tokio"]
+
 [dependencies]
 sigil-core = { workspace = true }
 sigil-graph = { workspace = true }
+sigil-ml-client = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

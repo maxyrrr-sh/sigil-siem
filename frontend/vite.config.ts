@@ -6,11 +6,12 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 // In prod, an nginx reverse-proxy plays the same role (see deploy/).
 const API_TARGET = process.env.SIGIL_API ?? 'http://127.0.0.1:8080'
 
+// Pass `/api/*` through unchanged — the backend serves the versioned API under
+// `/api/v1`. SSE needs buffering disabled.
 const proxy = {
   '/api': {
     target: API_TARGET,
     changeOrigin: true,
-    rewrite: (p: string) => p.replace(/^\/api/, ''),
   },
 }
 

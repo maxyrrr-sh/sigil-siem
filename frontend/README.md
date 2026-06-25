@@ -1,9 +1,33 @@
 # Sigil web console
 
-A lightweight, Splunk-style SIEM analyst console for Sigil. **MVP slice** of the
-plan in [`../docs/FRONTEND.md`](../docs/FRONTEND.md): **Overview · Search &
-Investigate · Alerts · Incidents + attack-graph**. The other modules are stubbed
-to a "planned" placeholder.
+A lightweight, Splunk-style SIEM analyst console for Sigil — the **full module
+set** from the plan in [`../docs/FRONTEND.md`](../docs/FRONTEND.md), ~36 KB
+gzipped, zero heavy runtime deps (Svelte 5 + Vite + plain CSS + inline SVG).
+
+- **Overview** — KPIs, recent alerts, top incident.
+- **Search & Investigate** — Search/SQL/pipe-DSL bar, events histogram, results +
+  JSON expand, field facets, saved searches, deep links, CSV/JSON export.
+- **Detections** — Sigma rule catalog (severity / ATT&CK / fire-counts) + tactic
+  coverage; **ATT&CK coverage** — tactic × technique matrix (covered vs observed).
+- **Alerts** — triage queue: severity/status filters, status workflow, bulk
+  actions, matched-events detail.
+- **Incidents + attack-graph** — interactive SVG kill-chain (clickable stages),
+  timeline, involved entities, contributing-edge "why", confidence.
+- **Dashboards** — SQL-driven panels (bar/single-value/table), add/remove, saved.
+- **Hunting** — notebook (markdown + runnable SQL/DSL cells), saved locally.
+- **Entities** — entity explorer: ranked entities, activity, connected neighbors.
+- **Data** — sources, pipelines, hot/warm/cold retention tiers, index stats.
+- **Cluster** — roles, transport, shard-map placement (from `/system`).
+- **Plugins** — WASM capability review (deny-by-default, mirrors `plugin verify`).
+- **Evaluation** — run the harness; combined vs baselines/ablations charts.
+- **Admin** — appearance/theme, node info, planned RBAC/SSO/audit surface.
+
+Backend endpoints added for these: `/incidents`, `/rules`, `/system`, `/eval`.
+
+> MVP simplifications (flagged in-app): client-side persistence (saved searches,
+> alert status, dashboards, notebooks) is localStorage — the server-side
+> saved-objects + alert-mutation endpoints are §8 backend work. The heavier viz
+> (CodeMirror, Cytoscape, uPlot) and OIDC auth remain the documented upgrade path.
 
 - **Stack:** Svelte 5 + Vite + TypeScript. Design tokens in CSS (`src/app.css`),
   typed API client (`src/lib/api.ts`), hash router, inline-SVG attack-graph.

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { theme, toggleTheme } from '../lib/theme.svelte';
+  import { auth, logout } from '../lib/auth.svelte';
 
   let events = $state<number | null>(null);
   let alerts = $state<number | null>(null);
@@ -36,6 +37,10 @@
   <div class="stat"><b>{alerts ?? '–'}</b> alerts</div>
   <div class="dot" class:on={online} title={online ? 'connected' : 'offline'}></div>
   <button class="btn" onclick={toggleTheme}>{theme.value === 'dark' ? '☾' : '☀'}</button>
+  {#if auth.enabled && auth.user}
+    <span class="user" title={auth.user.roles.join(', ')}>{auth.user.username}</span>
+    <button class="btn" onclick={logout}>Sign out</button>
+  {/if}
 </header>
 
 <style>
@@ -46,4 +51,5 @@
   .stat b { color: var(--text-strong); }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
   .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .user { font-size: 12px; color: var(--text-strong); }
 </style>

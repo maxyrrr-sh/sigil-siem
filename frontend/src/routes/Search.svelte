@@ -1,11 +1,17 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { api } from '../lib/api';
+  import { router } from '../lib/router.svelte';
   import type { AnalyticsResponse, SigilEvent } from '../lib/types';
   import { className, fmtTime } from '../lib/format';
+  import { download, toCSV } from '../lib/download';
   import Badge from '../components/Badge.svelte';
   import States from '../components/States.svelte';
+  import Histogram from '../components/Histogram.svelte';
 
   type Mode = 'search' | 'sql' | 'dsl';
+  type Saved = { id?: string; name: string; mode: Mode; q: string };
+
   let mode = $state<Mode>('search');
   let q = $state('');
   let loading = $state(false);
@@ -14,6 +20,8 @@
   let analytics = $state<AnalyticsResponse | null>(null);
   let expanded = $state<string | null>(null);
   let ran = $state(false);
+  let saved = $state<Saved[]>([]);
+  let copied = $state(false);
 
   const placeholders: Record<Mode, string> = {
     search: 'full-text over message / host / actor / target — empty = all events',
@@ -29,7 +37,6 @@
     dsl: ['search failed | stats count() as hits by host', 'where severity = high'],
   };
 
-  // facet counts for the field sidebar (events mode)
   let facets = $derived.by(() => {
     const by = (f: (e: SigilEvent) => string | undefined) => {
       const m = new Map<string, number>();
@@ -54,7 +61,7 @@
     expanded = null;
     try {
       if (mode === 'search') {
-        events = (await api.search(q, 200)).events;
+        events = (await api.search(q, 500)).events;
       } else {
         events = [];
         analytics = mode === 'sql' ? await api.sql(q) : await api.query(q);
@@ -73,6 +80,57 @@
   function onKey(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') run();
   }
+
+  function exportResults(fmt: 'csv' | 'json') {
+    const rows = analytics ? analytics.rows : (events as unknown as Record<string, unknown>[]);
+    if (rows.length === 0) return;
+    if (fmt === 'json') download('sigil-results.json', JSON.stringify(rows, null, 2), 'application/json');
+    else download('sigil-results.csv', toCSV(rows), 'text/csv');
+  }
+
+  async function loadSaved() {
+    try {
+      const res = await api.savedList('searches');
+      saved = res.objects.map((o) => ({ id: o.id, name: o.name, ...(o.body as { mode: Mode; q: string }) }));
+    } catch {
+      /* persistence off — leave empty */
+    }
+  }
+  async function saveSearch() {
+    const name = prompt('Save search as:', q.slice(0, 40) || mode);
+    if (!name) return;
+    try {
+      await api.savedCreate('searches', name, { mode, q });
+      await loadSaved();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+  function loadSearch(e: Event) {
+    const i = (e.currentTarget as HTMLSelectElement).selectedIndex - 1;
+    const s = saved[i];
+    if (!s) return;
+    mode = s.mode;
+    q = s.q;
+    run();
+  }
+  function copyLink() {
+    location.hash = `/search?mode=${mode}&q=${encodeURIComponent(q)}`;
+    navigator.clipboard?.writeText(location.href).catch(() => {});
+    copied = true;
+    setTimeout(() => (copied = false), 1500);
+  }
+
+  onMount(() => {
+    loadSaved();
+    const m = router.query.get('mode') as Mode | null;
+    const dq = router.query.get('q');
+    if (m) mode = m;
+    if (dq !== null) {
+      q = dq;
+      run();
+    }
+  });
 </script>
 
 <div class="page">
@@ -85,20 +143,18 @@
         <button class:active={mode === 'sql'} onclick={() => setMode('sql')}>SQL</button>
         <button class:active={mode === 'dsl'} onclick={() => setMode('dsl')}>Pipe-DSL</button>
       </div>
+      <select class="input saved" onchange={loadSearch}>
+        <option>saved searches…</option>
+        {#each saved as s (s.name)}<option>{s.name}</option>{/each}
+      </select>
       <span class="spacer"></span>
+      <button class="btn" onclick={saveSearch}>Save</button>
+      <button class="btn" onclick={copyLink}>{copied ? 'Copied!' : 'Copy link'}</button>
       <button class="btn primary" onclick={run} disabled={loading}>Run ⌘↵</button>
     </div>
-    <textarea
-      class="input"
-      rows="2"
-      placeholder={placeholders[mode]}
-      bind:value={q}
-      onkeydown={onKey}
-    ></textarea>
+    <textarea class="input" rows="2" placeholder={placeholders[mode]} bind:value={q} onkeydown={onKey}></textarea>
     <div class="chips">
-      {#each samples[mode] as s (s)}
-        <button class="chip" onclick={() => { q = s; run(); }}>{s}</button>
-      {/each}
+      {#each samples[mode] as s (s)}<button class="chip" onclick={() => { q = s; run(); }}>{s}</button>{/each}
     </div>
   </div>
 
@@ -107,7 +163,10 @@
   {#if !loading && !error && ran}
     {#if analytics}
       <div class="card">
-        <h2>Result · {analytics.count} rows</h2>
+        <div class="row"><h2 style="margin:0">Result · {analytics.count} rows</h2><span class="spacer"></span>
+          <button class="btn sm" onclick={() => exportResults('csv')}>CSV</button>
+          <button class="btn sm" onclick={() => exportResults('json')}>JSON</button>
+        </div>
         <div class="mono faint sql">{analytics.sql}</div>
         <div class="scroll">
           <table>
@@ -121,10 +180,16 @@
         </div>
       </div>
     {:else}
+      {#if events.length}
+        <div class="card hist-card"><Histogram {events} /></div>
+      {/if}
       <div class="results">
         <div class="card events">
-          <h2>{events.length} events</h2>
-          <div class="scroll" style="max-height: 70vh">
+          <div class="row"><h2 style="margin:0">{events.length} events</h2><span class="spacer"></span>
+            <button class="btn sm" onclick={() => exportResults('csv')}>CSV</button>
+            <button class="btn sm" onclick={() => exportResults('json')}>JSON</button>
+          </div>
+          <div class="scroll" style="max-height: 64vh">
             <table>
               <thead><tr><th>time</th><th>sev</th><th>class</th><th>host</th><th>actor</th><th>message</th></tr></thead>
               <tbody>
@@ -169,13 +234,15 @@
 <style>
   .page { display: grid; gap: 16px; }
   .bar { display: grid; gap: 10px; }
+  .saved { width: auto; }
+  .btn.sm { padding: 3px 8px; font-size: 12px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: 3px 8px; cursor: pointer; font: inherit; font-size: 12px; }
   .chip:hover { color: var(--text-strong); border-color: var(--border-2); }
+  .hist-card { padding: 10px 14px; }
   .results { display: grid; grid-template-columns: 1fr 220px; gap: 16px; }
-  .sql { margin-bottom: 10px; font-size: 12px; }
+  .sql { margin: 8px 0 10px; font-size: 12px; }
   .ev { cursor: pointer; }
-  .msg { color: var(--text); }
   .nowrap { white-space: nowrap; }
   .json { margin: 0; padding: 10px; background: var(--bg); border-radius: 6px; font-size: 12px; color: var(--text); overflow: auto; }
   .facet { margin-bottom: 14px; }

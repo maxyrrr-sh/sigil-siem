@@ -26,6 +26,8 @@ pub mod causal;
 pub mod embed;
 pub mod incident;
 pub mod pathselect;
+#[cfg(feature = "sidecar")]
+pub mod sidecar;
 pub mod triplet;
 pub mod vector;
 

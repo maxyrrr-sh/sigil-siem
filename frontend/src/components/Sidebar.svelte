@@ -17,26 +17,26 @@
     {
       name: 'Detect',
       items: [
-        { label: 'Detections', path: '/detections' },
-        { label: 'ATT&CK coverage', path: '/attack' },
+        { label: 'Detections', path: '/detections', ready: true },
+        { label: 'ATT&CK coverage', path: '/attack', ready: true },
       ],
     },
     {
       name: 'Explore',
       items: [
-        { label: 'Dashboards', path: '/dashboards' },
-        { label: 'Hunting', path: '/hunt' },
-        { label: 'Entities', path: '/entities' },
+        { label: 'Dashboards', path: '/dashboards', ready: true },
+        { label: 'Hunting', path: '/hunt', ready: true },
+        { label: 'Entities', path: '/entities', ready: true },
       ],
     },
     {
       name: 'Operate',
       items: [
-        { label: 'Data', path: '/data' },
-        { label: 'Cluster', path: '/cluster' },
-        { label: 'Plugins', path: '/plugins' },
-        { label: 'Evaluation', path: '/eval' },
-        { label: 'Admin', path: '/admin' },
+        { label: 'Data', path: '/data', ready: true },
+        { label: 'Cluster', path: '/cluster', ready: true },
+        { label: 'Plugins', path: '/plugins', ready: true },
+        { label: 'Evaluation', path: '/eval', ready: true },
+        { label: 'Admin', path: '/admin', ready: true },
       ],
     },
   ];

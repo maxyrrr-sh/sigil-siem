@@ -1,0 +1,17 @@
+[package]
+name = "sigil-ml-client"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Rust gRPC client for the Python ML sidecar (DESIGN section 9.9)"
+
+[dependencies]
+sigil-core = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = "3"

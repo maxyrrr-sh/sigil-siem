@@ -166,6 +166,46 @@ impl Config {
             }
         }
 
+        // Auth: when enabled, every user needs a credential and at least one user
+        // must exist or the API rejects all requests.
+        if self.auth.enabled {
+            if self.auth.users.is_empty() {
+                r.warn(
+                    "auth.enabled is true but no users are declared; the API will reject all requests"
+                        .to_string(),
+                );
+            }
+            if self.auth.jwt_secret.trim().is_empty() {
+                r.warn(
+                    "auth.jwt_secret is empty; an ephemeral secret will be generated (tokens won't survive a restart)"
+                        .to_string(),
+                );
+            }
+            let mut names: BTreeSet<&str> = BTreeSet::new();
+            for u in &self.auth.users {
+                if u.username.trim().is_empty() {
+                    r.error("auth user with empty username");
+                }
+                if !names.insert(u.username.as_str()) {
+                    r.error(format!("duplicate auth user `{}`", u.username));
+                }
+                if u.password_hash.is_none() && u.password.is_none() {
+                    r.error(format!(
+                        "auth user `{}` has neither `password_hash` nor `password`",
+                        u.username
+                    ));
+                }
+                for role in &u.roles {
+                    if !matches!(role.as_str(), "viewer" | "analyst" | "admin") {
+                        r.warn(format!(
+                            "auth user `{}` has unknown role `{}` (known: viewer, analyst, admin)",
+                            u.username, role
+                        ));
+                    }
+                }
+            }
+        }
+
         r
     }
 }

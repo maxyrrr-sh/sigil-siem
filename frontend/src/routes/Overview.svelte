@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
-  import type { Alert, Incident } from '../lib/types';
+  import type { AlertRecord, Incident } from '../lib/types';
   import Badge from '../components/Badge.svelte';
   import States from '../components/States.svelte';
   import { fmtTime } from '../lib/format';
@@ -10,12 +10,12 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let events = $state(0);
-  let alerts = $state<Alert[]>([]);
+  let alerts = $state<AlertRecord[]>([]);
   let incidents = $state<Incident[]>([]);
 
   let topTechniques = $derived.by(() => {
     const counts = new Map<string, number>();
-    for (const a of alerts) if (a.technique) counts.set(a.technique, (counts.get(a.technique) ?? 0) + 1);
+    for (const r of alerts) if (r.alert.technique) counts.set(r.alert.technique, (counts.get(r.alert.technique) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
   });
 
@@ -55,12 +55,12 @@
           <table>
             <thead><tr><th>rule</th><th>title</th><th>severity</th><th>ATT&CK</th></tr></thead>
             <tbody>
-              {#each alerts.slice(0, 12) as a (a.events.join() + a.rule_id + a.ts)}
+              {#each alerts.slice(0, 12) as r (r.fingerprint)}
                 <tr>
-                  <td class="mono">{a.rule_id}</td>
-                  <td>{a.title}</td>
-                  <td><Badge severity={a.severity} /></td>
-                  <td>{#if a.technique}<span class="pill">{a.technique}</span>{/if}</td>
+                  <td class="mono">{r.alert.rule_id}</td>
+                  <td>{r.alert.title}</td>
+                  <td><Badge severity={r.alert.severity} /></td>
+                  <td>{#if r.alert.technique}<span class="pill">{r.alert.technique}</span>{/if}</td>
                 </tr>
               {/each}
               {#if alerts.length === 0}<tr><td colspan="4" class="faint">no alerts</td></tr>{/if}

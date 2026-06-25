@@ -4,14 +4,37 @@
   import type { Incident } from '../lib/types';
   import States from '../components/States.svelte';
   import AttackGraph from '../components/AttackGraph.svelte';
-  import { confidenceLabel } from '../lib/format';
+  import { confidenceLabel, fmtTime } from '../lib/format';
 
   let loading = $state(true);
   let error = $state<string | null>(null);
   let incidents = $state<Incident[]>([]);
   let selectedId = $state<number | null>(null);
+  let stageIdx = $state(0);
 
   let selected = $derived(incidents.find((i) => i.id === selectedId) ?? incidents[0] ?? null);
+  let stage = $derived(selected?.chain[stageIdx] ?? null);
+
+  // unique entities involved, parsed from the chain + the "why" explanations.
+  let entities = $derived.by(() => {
+    if (!selected) return [] as string[];
+    const set = new Set<string>();
+    const re = /\b(host|user|ip|process|file|url):([^\s,;)]+)/g;
+    for (const w of selected.explanation) {
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(w))) set.add(`${m[1]}:${m[2]}`);
+    }
+    for (const s of selected.chain) {
+      const m = s.label.match(/(\w+):(\S+)/);
+      if (m) set.add(`${m[1]}:${m[2]}`);
+    }
+    return [...set].sort();
+  });
+
+  function pick(id: number) {
+    selectedId = id;
+    stageIdx = 0;
+  }
 
   async function load() {
     loading = true;
@@ -19,6 +42,7 @@
     try {
       incidents = (await api.incidents()).incidents;
       if (incidents[0]) selectedId = incidents[0].id;
+      stageIdx = 0;
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -40,7 +64,7 @@
       <div class="card list">
         <h2>{incidents.length} incidents</h2>
         {#each incidents as inc (inc.id)}
-          <button class="inc" class:active={selected?.id === inc.id} onclick={() => (selectedId = inc.id)}>
+          <button class="inc" class:active={selected?.id === inc.id} onclick={() => pick(inc.id)}>
             <div class="row">
               <span class="tag">{inc.tactics.join(' → ')}</span>
               <span class="spacer"></span>
@@ -56,23 +80,42 @@
         <div class="detail">
           <div class="card">
             <div class="row">
-              <h2 style="margin:0">Incident #{selected.id} · reconstructed attack graph</h2>
+              <h2 style="margin:0">Incident #{selected.id} · attack graph</h2>
               <span class="spacer"></span>
               <span class="conf conf-{confidenceLabel(selected.confidence)}">confidence {selected.confidence.toFixed(2)}</span>
             </div>
             <div class="tactics">{selected.tactics.join('  →  ')}</div>
-            <AttackGraph incident={selected} />
+            <AttackGraph incident={selected} selected={stageIdx} onselect={(i) => (stageIdx = i)} />
+            {#if stage}
+              <div class="stagebox">
+                <b>Stage {stageIdx + 1}/{selected.chain.length}</b> · <span class="tag">{stage.tactic ?? '—'}</span>
+                {#if stage.technique}<span class="pill">{stage.technique}</span>{/if}
+                <span class="muted"> · {stage.label} · anomaly {stage.anomaly.toFixed(2)}</span>
+                <code class="evid faint">{stage.event_id.slice(0, 12)}</code>
+              </div>
+            {/if}
+          </div>
+
+          <div class="card">
+            <h2>Involved entities</h2>
+            <div class="ents">
+              {#each entities as e (e)}<span class="pill ent">{e}</span>{/each}
+              {#if entities.length === 0}<span class="faint">—</span>{/if}
+            </div>
           </div>
 
           <div class="cols">
             <div class="card">
-              <h2>Kill-chain</h2>
-              <ol class="chain">
-                {#each selected.chain as s (s.event_id)}
-                  <li>
-                    <span class="tag">{s.tactic ?? '—'}</span> {s.label}
-                    {#if s.technique}<span class="pill">{s.technique}</span>{/if}
-                    <code class="evid faint">{s.event_id.slice(0, 8)}</code>
+              <h2>Timeline</h2>
+              <ol class="timeline">
+                {#each selected.chain as s, i (s.event_id)}
+                  <li class:cur={i === stageIdx}>
+                    <span class="t mono">{fmtTime(s.ts)}</span>
+                    <span class="dot"></span>
+                    <button class="line" onclick={() => (stageIdx = i)}>
+                      <span class="tag">{s.tactic ?? '—'}</span> {s.label}
+                      {#if s.technique}<span class="pill">{s.technique}</span>{/if}
+                    </button>
                   </li>
                 {/each}
               </ol>
@@ -103,11 +146,19 @@
   .techs { display: flex; flex-wrap: wrap; gap: 4px; }
   .detail { display: grid; gap: 16px; }
   .tactics { color: var(--tactic); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; margin: 8px 0 4px; }
+  .stagebox { margin-top: 8px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  .evid { margin-left: 8px; font-size: 11px; }
+  .ents { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ent { font-family: var(--mono); }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .chain { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+  .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .timeline li { display: grid; grid-template-columns: 130px 14px 1fr; align-items: center; padding: 2px 0; }
+  .timeline .t { color: var(--faint); font-size: 11px; }
+  .timeline .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-2); justify-self: center; }
+  .timeline li.cur .dot { background: var(--accent); }
+  .timeline .line { background: transparent; border: 0; color: var(--text); text-align: left; cursor: pointer; font: inherit; padding: 4px 6px; border-radius: 4px; }
+  .timeline li.cur .line { background: var(--surface-2); }
   .why { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-  .why li { color: var(--text); }
-  .evid { margin-left: 6px; font-size: 11px; }
   .conf { font-size: 12px; color: var(--muted); }
   .conf-high { color: var(--sev-high); }
   .conf-medium { color: var(--sev-medium); }

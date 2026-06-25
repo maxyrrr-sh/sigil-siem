@@ -1,7 +1,11 @@
 <script lang="ts">
   import type { Incident } from '../lib/types';
 
-  let { incident }: { incident: Incident } = $props();
+  let {
+    incident,
+    selected = -1,
+    onselect,
+  }: { incident: Incident; selected?: number; onselect?: (i: number) => void } = $props();
 
   const NODE_W = 210;
   const NODE_H = 58;
@@ -11,7 +15,7 @@
 
   let steps = $derived(incident.chain);
   let width = $derived(PAD * 2 + steps.length * NODE_W + Math.max(0, steps.length - 1) * GAP);
-  let height = 132;
+  const height = 132;
 
   function x(i: number): number {
     return PAD + i * (NODE_W + GAP);
@@ -35,15 +39,17 @@
       {/if}
 
       <text class="tactic-lbl" x={x(i)} y={Y - 10}>{step.tactic ?? '—'}</text>
-      <rect x={x(i)} y={Y} width={NODE_W} height={NODE_H} rx="7"
-        fill="var(--surface-2)" stroke="var(--border-2)" />
-      <text class="node-step" x={x(i) + 12} y={Y + 16}>{i + 1}. {step.label}</text>
-      {#if step.technique}
-        <text class="node-tech" x={x(i) + 12} y={Y + 38}>{step.technique}</text>
-      {/if}
-      <text class="node-anom" x={x(i) + NODE_W - 12} y={Y + 38}>
-        anomaly {step.anomaly.toFixed(2)}
-      </text>
+      <g class="node" role="button" tabindex="0" onclick={() => onselect?.(i)} onkeydown={(e) => e.key === 'Enter' && onselect?.(i)}>
+        <rect x={x(i)} y={Y} width={NODE_W} height={NODE_H} rx="7"
+          fill={selected === i ? 'var(--surface-2)' : 'var(--surface-2)'}
+          stroke={selected === i ? 'var(--accent)' : 'var(--border-2)'}
+          stroke-width={selected === i ? 2 : 1} />
+        <text class="node-step" x={x(i) + 12} y={Y + 16}>{i + 1}. {step.label}</text>
+        {#if step.technique}
+          <text class="node-tech" x={x(i) + 12} y={Y + 38}>{step.technique}</text>
+        {/if}
+        <text class="node-anom" x={x(i) + NODE_W - 12} y={Y + 38}>anomaly {step.anomaly.toFixed(2)}</text>
+      </g>
     {/each}
   </svg>
 </div>
@@ -52,6 +58,8 @@
   .graph-wrap { padding-bottom: 6px; }
   svg { display: block; }
   text { fill: var(--text); font-family: var(--sans); }
+  .node { cursor: pointer; }
+  .node:focus { outline: none; }
   .tactic-lbl { fill: var(--tactic); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
   .node-step { font-size: 12px; fill: var(--text-strong); }
   .node-tech { font-size: 12px; fill: var(--accent-2); font-family: var(--mono); }

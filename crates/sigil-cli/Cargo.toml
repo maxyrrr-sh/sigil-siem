@@ -21,7 +21,10 @@ sigil-correlate = { workspace = true }
 sigil-cluster = { workspace = true }
 sigil-plugin-wasm = { workspace = true }
 sigil-eval = { workspace = true }
+sigil-store = { workspace = true }
 tokio = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }

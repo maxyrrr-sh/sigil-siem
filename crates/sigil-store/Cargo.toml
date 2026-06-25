@@ -1,0 +1,16 @@
+[package]
+name = "sigil-store"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Durable embedded store for alerts (triage) and saved objects (DESIGN section 14)"
+
+[dependencies]
+sigil-core = { workspace = true }
+redb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -4,9 +4,11 @@
 //! file-driven path used for demos and tests (DESIGN §3 hot path, §5, §8).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use sigil_api::auth::AuthState;
 use sigil_api::AlertStore;
 use sigil_cluster::{Role, RoleSet};
 use sigil_config::{Config, InputConfig};
@@ -19,6 +21,7 @@ use sigil_index::{parse_duration_micros, Analytics, ColumnarStore, EventIndex};
 use sigil_ingest::{build_codec, spawn_syslog_tcp, spawn_syslog_udp, FileTailer, TemplateMiner};
 use sigil_normalize::Normalizer;
 use sigil_sigma::SigmaEngine;
+use sigil_store::Store;
 use tokio::sync::mpsc;
 
 use crate::output::Outputs;
@@ -60,9 +63,27 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     let analytics = Analytics::new(cfg.index.resolved_cold_path());
     let retention_micros = parse_duration_micros(&cfg.index.retention.cold);
     let normalizer = Normalizer::new(TENANT);
-    let alerts = AlertStore::default();
+
+    // Durable store (alert triage + saved objects); hydrate the in-memory ring.
+    let store = Arc::new(Store::open(
+        PathBuf::from(cfg.resolved_data_dir()).join("store.redb"),
+    )?);
+    let alerts = AlertStore::default().with_store(store.clone());
+    alerts.hydrate();
+
+    let auth = Arc::new(AuthState::from_config(&cfg.auth));
+    let metrics = match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
+        Ok(handle) => Some(Arc::new(handle)),
+        Err(e) => {
+            tracing::warn!(error = %e, "prometheus recorder unavailable; /metrics disabled");
+            None
+        }
+    };
+
     let outputs = Outputs::new(&cfg.sigma.outputs);
-    let engine = build_engine(&cfg)?;
+    // Detection engine, shared with the API so rule edits take effect live.
+    let engine = Arc::new(RwLock::new(build_engine(&cfg)?));
+    let engine_len = engine.read().unwrap().len();
 
     // Resolve this node's roles (DESIGN §4.1). Monolith = all roles.
     let (roles, unknown) = RoleSet::from_targets(&cfg.cluster.targets);
@@ -76,7 +97,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
 
     let index_sources = sources_routed_to(&cfg, "index");
     let sigma_sources = sources_routed_to(&cfg, "sigma");
-    let sigma_active = cfg.sigma.enabled && !engine.is_empty();
+    let sigma_active = cfg.sigma.enabled && engine_len > 0;
 
     let (tx, mut rx) = mpsc::channel::<RawFrame>(8192);
 
@@ -98,11 +119,22 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
 
     // Serve the query/alert/analytics API only if this node holds `query`.
     if run_query {
-        let index = index.clone();
-        let alerts = alerts.clone();
-        let analytics = analytics.clone();
+        let mut system = build_system_info(&cfg, &active, engine_len);
+        system.auth_enabled = cfg.auth.enabled;
+        system.persistence = true;
+        let state = sigil_api::ApiState {
+            index: index.clone(),
+            alerts: alerts.clone(),
+            analytics: analytics.clone(),
+            engine: engine.clone(),
+            rules_dir: cfg.sigma.rules_dir.as_ref().map(PathBuf::from),
+            store: Some(store.clone()),
+            auth: auth.clone(),
+            system: Arc::new(system),
+            metrics: metrics.clone(),
+        };
         tokio::spawn(async move {
-            if let Err(e) = sigil_api::serve(&api_addr, index, alerts, analytics).await {
+            if let Err(e) = sigil_api::serve(&api_addr, state).await {
                 tracing::error!(error = %e, "api server stopped");
             }
         });
@@ -113,7 +145,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     tracing::info!(
         index = %cfg.index.resolved_path(),
         cold = %cfg.index.resolved_cold_path(),
-        rules = engine.len(),
+        rules = engine_len,
         "node running; Ctrl-C to stop"
     );
 
@@ -140,6 +172,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
                             }
                             if frame.should_index {
                                 index.add(&event)?;
+                                metrics::counter!("sigil_events_indexed_total").increment(1);
                                 dirty += 1;
                                 buffer.push(event);
                                 if buffer.len() >= ROLL_MAX {
@@ -207,15 +240,23 @@ fn roll(store: &ColumnarStore, buffer: &mut Vec<Event>) -> Result<()> {
     Ok(())
 }
 
-/// Run the Sigma engine over one event, recording + emitting any alerts.
-async fn detect(engine: &SigmaEngine, event: &Event, store: &AlertStore, outputs: &Outputs) {
-    for alert in engine.eval(event) {
+/// Run the Sigma engine over one event, recording + emitting any alerts. The
+/// engine is read-locked briefly (rule edits via the API take the write lock).
+async fn detect(
+    engine: &Arc<RwLock<SigmaEngine>>,
+    event: &Event,
+    store: &AlertStore,
+    outputs: &Outputs,
+) {
+    let alerts = engine.read().unwrap().eval(event);
+    for alert in alerts {
         tracing::info!(
             rule = %alert.rule_id,
             technique = alert.technique.as_deref().unwrap_or("-"),
             severity = ?alert.severity,
             "ALERT"
         );
+        metrics::counter!("sigil_alerts_total").increment(1);
         store.push(alert.clone());
         outputs.emit(&alert).await;
     }
@@ -374,6 +415,49 @@ fn sources_routed_to(cfg: &Config, sink: &str) -> HashSet<String> {
         }
     }
     set
+}
+
+/// Build the static node/config info surfaced at `GET /system`.
+fn build_system_info(cfg: &Config, roles: &[&str], rule_count: usize) -> sigil_api::SystemInfo {
+    sigil_api::SystemInfo {
+        roles: roles.iter().map(|s| s.to_string()).collect(),
+        transport: cfg
+            .cluster
+            .transport_kind()
+            .unwrap_or_else(|| "inproc".into()),
+        nodes: if cfg.cluster.nodes.is_empty() {
+            vec!["local".into()]
+        } else {
+            cfg.cluster.nodes.clone()
+        },
+        shards: cfg.cluster.shards.unwrap_or(8),
+        replication: cfg.cluster.replication.unwrap_or(1),
+        sources: cfg
+            .inputs
+            .iter()
+            .map(|i| sigil_api::SourceInfo {
+                id: i.id.clone(),
+                kind: i.kind.clone(),
+                codec: i.codec.kind.clone(),
+            })
+            .collect(),
+        pipelines: cfg
+            .pipelines
+            .iter()
+            .map(|p| sigil_api::PipelineInfo {
+                id: p.id.clone(),
+                from: p.from.clone(),
+                route: p.route.iter().map(|r| r.to.clone()).collect(),
+            })
+            .collect(),
+        retention_hot: cfg.index.retention.hot.clone(),
+        retention_warm: cfg.index.retention.warm.clone(),
+        retention_cold: cfg.index.retention.cold.clone(),
+        index_path: cfg.index.resolved_path(),
+        cold_path: cfg.index.resolved_cold_path(),
+        rule_count,
+        ..Default::default()
+    }
 }
 
 fn spawn_file_input(

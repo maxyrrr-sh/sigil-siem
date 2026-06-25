@@ -14,6 +14,8 @@ members = [
     "crates/sigil-plugin-wasm",
     "crates/sigil-cluster",
     "crates/sigil-config",
+    "crates/sigil-store",
+    "crates/sigil-ml-client",
     "crates/sigil-api",
     "crates/sigil-eval",
     "crates/sigil-cli",
@@ -33,6 +35,8 @@ default-members = [
     "crates/sigil-plugin-wasm",
     "crates/sigil-cluster",
     "crates/sigil-config",
+    "crates/sigil-store",
+    "crates/sigil-ml-client",
     "crates/sigil-api",
     "crates/sigil-eval",
     "crates/sigil-cli",
@@ -43,7 +47,7 @@ version = "0.0.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
-repository = "https://github.com/your-org/sigil-siem"
+repository = "https://github.com/maxyrrr-sh/sigil-siem"
 
 # Shared dependency versions for the whole workspace. Individual crates opt in
 # with `dep.workspace = true` so versions stay unified (DESIGN §16 stack).
@@ -66,9 +70,24 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 datafusion = "54"
 petgraph = "0.6"
+# auth / persistence / transport / observability (Keystone + Ops)
+redb = "2"
+jsonwebtoken = "9"
+argon2 = "0.5"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower = "0.4"
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false }
+tonic = "0.12"
+tonic-build = "0.12"
+prost = "0.13"
+tokio-stream = { version = "0.1", features = ["sync"] }
+tempfile = "3"
 # internal
 sigil-core = { path = "crates/sigil-core" }
 sigil-config = { path = "crates/sigil-config" }
+sigil-store = { path = "crates/sigil-store" }
+sigil-ml-client = { path = "crates/sigil-ml-client" }
 sigil-ingest = { path = "crates/sigil-ingest" }
 sigil-normalize = { path = "crates/sigil-normalize" }
 sigil-index = { path = "crates/sigil-index" }

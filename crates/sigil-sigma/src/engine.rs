@@ -5,11 +5,22 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use sigil_core::{now_micros, Alert, Error, Event, Result, Severity};
 
 use crate::condition::{self, Expr};
 use crate::matcher::{event_haystack, FieldCond, Modifiers, Selection, StringPredicate};
 use crate::rule::SigmaRule;
+
+/// Lightweight, serializable metadata about a loaded rule (API/UI surface).
+#[derive(Debug, Clone, Serialize)]
+pub struct RuleInfo {
+    pub rule_id: String,
+    pub title: String,
+    pub severity: Severity,
+    pub technique: Option<String>,
+    pub tags: Vec<String>,
+}
 
 /// A compiled, ready-to-evaluate Sigma rule.
 #[derive(Debug, Clone)]
@@ -120,6 +131,20 @@ impl SigmaEngine {
 
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
+    }
+
+    /// Lightweight metadata for every loaded rule (for the API / UI).
+    pub fn rule_infos(&self) -> Vec<RuleInfo> {
+        self.rules
+            .iter()
+            .map(|r| RuleInfo {
+                rule_id: r.rule_id.clone(),
+                title: r.title.clone(),
+                severity: r.severity,
+                technique: r.technique.clone(),
+                tags: r.tags.clone(),
+            })
+            .collect()
     }
 
     /// Load every `*.yml` / `*.yaml` rule under `dir` (recursively). Individual

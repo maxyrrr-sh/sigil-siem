@@ -35,11 +35,82 @@ pub struct Config {
     pub index: IndexConfig,
     #[serde(default)]
     pub sigma: SigmaConfig,
+    /// API authentication / RBAC (DESIGN §14). Defaults to enabled.
+    #[serde(default)]
+    pub auth: AuthConfig,
+    /// Directory for the durable embedded store (alerts triage + saved objects).
+    /// Defaults to `./data/store`.
+    #[serde(default)]
+    pub data_dir: Option<String>,
+    /// Address of the optional ML sidecar (`http://host:port`). When unset the
+    /// offline embedder is used (DESIGN §9.9).
+    #[serde(default)]
+    pub ml_sidecar: Option<String>,
     /// Permissively-parsed sections not yet wired to behavior (Phases 3+).
     #[serde(default)]
     pub correlation: serde_yaml::Value,
     #[serde(default)]
     pub plugins: Vec<serde_yaml::Value>,
+}
+
+impl Config {
+    /// Resolved on-disk path for the durable embedded store.
+    pub fn resolved_data_dir(&self) -> String {
+        self.data_dir
+            .clone()
+            .unwrap_or_else(|| "./data/store".to_string())
+    }
+}
+
+/// `auth:` block — local JWT authentication + role-based access (DESIGN §14).
+///
+/// This ships a local-credentials provider (users declared here); the same
+/// surface is structured so an OIDC provider drops in later. Passwords may be
+/// given as an argon2 `password_hash` (preferred) or, for dev, a plaintext
+/// `password`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// HS256 signing secret for issued JWTs. If empty, an ephemeral secret is
+    /// generated at startup (tokens then don't survive a restart).
+    #[serde(default)]
+    pub jwt_secret: String,
+    /// Token lifetime in seconds (default 8h).
+    #[serde(default = "default_token_ttl")]
+    pub token_ttl_secs: u64,
+    #[serde(default)]
+    pub users: Vec<UserConfig>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        AuthConfig {
+            enabled: true,
+            jwt_secret: String::new(),
+            token_ttl_secs: default_token_ttl(),
+            users: Vec::new(),
+        }
+    }
+}
+
+fn default_token_ttl() -> u64 {
+    8 * 60 * 60
+}
+
+/// One declared API user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserConfig {
+    pub username: String,
+    /// Argon2 PHC string (preferred). Mutually exclusive with `password`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
+    /// Plaintext password (dev convenience only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Roles: `viewer`, `analyst`, `admin`.
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 /// `cluster:` block (DESIGN §4). Defaults to a monolith / in-proc node.

@@ -6,11 +6,15 @@
 > Sigil's differentiator — semantic + causal correlation and the reconstructed
 > attack graph — as a first-class surface, not an afterthought.
 
-This is the design for the **production frontend**. The **MVP slice** (F0 shell +
-F1 Search & Investigate + F2 Alerts + F3 Incidents/attack-graph) is built in
-[`frontend/`](../frontend/) as a lightweight Svelte SPA talking to the API
-(incl. a new `GET /incidents`); the remaining modules are stubbed to a "planned"
-placeholder. Section numbers reference `docs/DESIGN.md`.
+This is the design for the **production frontend**. The **full module set** is
+built in [`frontend/`](../frontend/) as a lightweight Svelte SPA (~36 KB gz):
+Overview, Search & Investigate, Detections, ATT&CK coverage, Alerts triage,
+Incidents + interactive attack-graph, Dashboards, Hunting (notebook), Entities,
+Data, Cluster, Plugins (capability review), Evaluation, and Admin. New API
+endpoints added for these: `GET /incidents`, `/rules`, `/system`, `/eval`.
+Remaining depth (server-side saved objects + alert mutations, the heavier viz
+libs, OIDC auth — §8/§13) is the documented upgrade path. Section numbers
+reference `docs/DESIGN.md`.
 
 > **MVP simplifications** (lightweight-first; all documented upgrade paths in §3):
 > plain CSS tokens (not Tailwind yet), `fetch` (not `@tanstack/svelte-query`),

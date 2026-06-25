@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use serde::Serialize;
 use sigil_core::Event;
 use sigil_correlate::{
     build_campaigns, build_incident, BeamSearchSelector, CampaignConfig, CausalConfig,
@@ -43,7 +44,7 @@ impl Variant {
 }
 
 /// Scores for one variant.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VariantResult {
     pub variant: &'static str,
     pub ari: f64,
@@ -55,7 +56,7 @@ pub struct VariantResult {
 }
 
 /// The full comparison report.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EvalReport {
     pub scenario: String,
     pub alerts: usize,

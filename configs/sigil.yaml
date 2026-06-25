@@ -3,6 +3,25 @@
 # Reference: docs/DESIGN.md §13.
 version: 1
 
+# Durable store for alert triage + saved objects (survives restarts).
+data_dir: ./data/store
+
+# API authentication + RBAC (DESIGN §14). The Svelte console is the authenticated
+# UI. Generate a password hash with:  sigil auth hash <password>
+# For production set `jwt_secret` and use `password_hash` instead of `password`.
+auth:
+  enabled: true
+  jwt_secret: ""            # empty = ephemeral secret (tokens reset on restart)
+  token_ttl_secs: 28800     # 8h
+  users:
+    - username: admin
+      password: changeme    # dev only — prefer `password_hash: "$argon2id$..."`
+      roles: [admin]
+
+# Optional ML sidecar (SecureBERT embeddings / GNN scoring). Unset = offline
+# embedder. Requires building correlate with `--features sidecar` to use.
+# ml_sidecar: http://127.0.0.1:50051
+
 cluster:
   targets: [all]                 # or e.g. [ingest, index] on this node
   object_store:

@@ -8,3 +8,4 @@ description = "Evaluation harness + metrics for the correlation feature (DESIGN 
 [dependencies]
 sigil-core = { workspace = true }
 sigil-correlate = { workspace = true }
+serde = { workspace = true }

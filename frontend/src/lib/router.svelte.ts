@@ -1,18 +1,22 @@
 // Minimal hash router (static-host friendly — no server rewrites needed).
-// SvelteKit routing is the planned upgrade for the full app.
+// Supports `#/path?a=b` deep links. SvelteKit routing is the planned upgrade.
 
-function parse(): string {
-  const h = location.hash.replace(/^#/, '');
-  return h === '' ? '/' : h;
+function parse(): { path: string; query: URLSearchParams } {
+  const raw = location.hash.replace(/^#/, '') || '/';
+  const [path, qs] = raw.split('?');
+  return { path: path || '/', query: new URLSearchParams(qs ?? '') };
 }
 
-export const router = $state({ path: parse() });
+export const router = $state(parse());
 
 window.addEventListener('hashchange', () => {
-  router.path = parse();
+  const p = parse();
+  router.path = p.path;
+  router.query = p.query;
 });
 
+/** Navigate to a path (optionally with a `?query` suffix). */
 export function navigate(path: string): void {
-  if (location.hash.replace(/^#/, '') !== path) location.hash = path;
-  else router.path = path;
+  const target = path.replace(/^#/, '');
+  if (location.hash.replace(/^#/, '') !== target) location.hash = target;
 }

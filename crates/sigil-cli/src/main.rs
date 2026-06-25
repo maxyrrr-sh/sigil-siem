@@ -99,6 +99,20 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Authentication helpers (DESIGN §14).
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthAction {
+    /// Hash a password into an argon2 PHC string for `auth.users[].password_hash`.
+    Hash {
+        /// The plaintext password to hash.
+        password: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -176,6 +190,18 @@ fn dispatch(cli: Cli) -> sigil_core::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Config { action } => cmd_config(action),
+        Command::Auth { action } => cmd_auth(action),
+    }
+}
+
+fn cmd_auth(action: AuthAction) -> sigil_core::Result<ExitCode> {
+    match action {
+        AuthAction::Hash { password } => {
+            let hash = sigil_api::auth::hash_password(&password)
+                .map_err(|e| sigil_core::Error::Other(format!("hashing failed: {e}")))?;
+            println!("{hash}");
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
