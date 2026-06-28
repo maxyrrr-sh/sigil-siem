@@ -1,0 +1,13 @@
+[package]
+name = "sigil-enrich"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Sigil event-enrichment processors (geoip/threat-intel/redact/entropy) + chain"
+
+[dependencies]
+sigil-core = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+regex = { workspace = true }
+tracing = { workspace = true }

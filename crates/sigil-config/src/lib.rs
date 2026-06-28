@@ -16,7 +16,7 @@ pub use validate::ValidationReport;
 /// Sinks a pipeline may route to. Phase 0 only wires `index`.
 pub const KNOWN_SINKS: &[&str] = &["index", "sigma", "correlation"];
 /// Codecs Phase 0 ships. Others parse but warn on validate.
-pub const KNOWN_CODECS: &[&str] = &["json", "syslog"];
+pub const KNOWN_CODECS: &[&str] = &["json", "syslog", "cef", "leef"];
 /// Input kinds Phase 0 implements end-to-end.
 pub const IMPLEMENTED_INPUTS: &[&str] = &["file", "syslog"];
 
@@ -46,6 +46,10 @@ pub struct Config {
     /// offline embedder is used (DESIGN §9.9).
     #[serde(default)]
     pub ml_sidecar: Option<String>,
+    /// Custom (non-Sigma) detectors to evaluate after the Sigma engine. Names
+    /// or name+settings maps, e.g. `[dga]` or `[{ dga: { threshold: 4.0 } }]`.
+    #[serde(default)]
+    pub detectors: serde_yaml::Value,
     /// Permissively-parsed sections not yet wired to behavior (Phases 3+).
     #[serde(default)]
     pub correlation: serde_yaml::Value,
@@ -59,6 +63,54 @@ impl Config {
         self.data_dir
             .clone()
             .unwrap_or_else(|| "./data/store".to_string())
+    }
+
+    /// Collect `enrich:` steps across all pipelines as `(name, settings)` pairs
+    /// in pipeline+step order. Supports both bare names
+    /// (`enrich: [geoip, threat_intel]`) and name+settings maps
+    /// (`enrich: [{ threatintel: { feed: ./iocs.txt } }]`). Settings is
+    /// `Null` when only a name was given.
+    pub fn enrich_steps(&self) -> Vec<(String, serde_yaml::Value)> {
+        let key = serde_yaml::Value::String("enrich".to_string());
+        let mut out = Vec::new();
+        for p in &self.pipelines {
+            for step in &p.steps {
+                if let serde_yaml::Value::Mapping(m) = step {
+                    if let Some(enrich) = m.get(&key) {
+                        collect_named_steps(enrich, &mut out);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Custom detectors as `(name, settings)` pairs (top-level `detectors:`).
+    pub fn detector_steps(&self) -> Vec<(String, serde_yaml::Value)> {
+        let mut out = Vec::new();
+        collect_named_steps(&self.detectors, &mut out);
+        out
+    }
+}
+
+/// Flatten a YAML value into `(name, settings)` pairs. Accepts a bare string, a
+/// sequence of names/maps, or a single name→settings map.
+fn collect_named_steps(value: &serde_yaml::Value, out: &mut Vec<(String, serde_yaml::Value)>) {
+    match value {
+        serde_yaml::Value::String(name) => out.push((name.clone(), serde_yaml::Value::Null)),
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                collect_named_steps(item, out);
+            }
+        }
+        serde_yaml::Value::Mapping(m) => {
+            for (k, v) in m {
+                if let serde_yaml::Value::String(name) = k {
+                    out.push((name.clone(), v.clone()));
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -245,7 +297,8 @@ fn default_true() -> bool {
     true
 }
 
-/// Alerting sinks (DESIGN §8 outputs).
+/// Alerting sinks (DESIGN §8 outputs). The `file` sink is local; the rest are
+/// best-effort network sinks (`net:egress`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AlertOutputs {
     /// Append matched alerts as JSON lines to this file.
@@ -254,6 +307,53 @@ pub struct AlertOutputs {
     /// POST each alert as JSON to this URL.
     #[serde(default)]
     pub webhook: Option<String>,
+    /// Slack / Mattermost incoming-webhook URL.
+    #[serde(default)]
+    pub slack: Option<String>,
+    /// PagerDuty Events API v2.
+    #[serde(default)]
+    pub pagerduty: Option<PagerDutyOutput>,
+    /// Jira issue creation.
+    #[serde(default)]
+    pub jira: Option<JiraOutput>,
+    /// MISP event push (share discovered IOCs).
+    #[serde(default)]
+    pub misp: Option<MispOutput>,
+}
+
+/// PagerDuty Events API v2 sink config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagerDutyOutput {
+    /// Events API v2 integration ("routing") key.
+    pub routing_key: String,
+    /// Override the enqueue URL (defaults to PagerDuty's public endpoint).
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Jira issue-creation sink config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JiraOutput {
+    /// Base URL, e.g. `https://org.atlassian.net`.
+    pub url: String,
+    /// Project key, e.g. `SEC`.
+    pub project: String,
+    /// Login (email) for basic auth.
+    pub user: String,
+    /// API token for basic auth.
+    pub token: String,
+    /// Issue type name (defaults to `Task`).
+    #[serde(default)]
+    pub issue_type: Option<String>,
+}
+
+/// MISP event-push sink config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MispOutput {
+    /// MISP base URL.
+    pub url: String,
+    /// MISP automation API key (sent as the `Authorization` header).
+    pub api_key: String,
 }
 
 /// `index:` block.

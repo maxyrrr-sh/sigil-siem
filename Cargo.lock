@@ -4130,16 +4130,20 @@ dependencies = [
 name = "sigil-cli"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "clap",
  "metrics",
  "metrics-exporter-prometheus",
  "reqwest",
  "serde_json",
+ "serde_yaml",
  "sigil-api",
  "sigil-cluster",
  "sigil-config",
  "sigil-core",
  "sigil-correlate",
+ "sigil-detect",
+ "sigil-enrich",
  "sigil-eval",
  "sigil-index",
  "sigil-ingest",
@@ -4205,6 +4209,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigil-detect"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "serde_yaml",
+ "sigil-core",
+ "tracing",
+]
+
+[[package]]
+name = "sigil-enrich"
+version = "0.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
+ "serde_yaml",
+ "sigil-core",
+ "tracing",
+]
+
+[[package]]
 name = "sigil-eval"
 version = "0.0.0"
 dependencies = [
@@ -4239,6 +4264,7 @@ dependencies = [
 name = "sigil-ingest"
 version = "0.0.0"
 dependencies = [
+ "regex",
  "serde_json",
  "sigil-core",
  "tempfile",

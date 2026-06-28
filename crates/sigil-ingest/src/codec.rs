@@ -15,6 +15,8 @@ pub fn build_codec(kind: &str) -> Box<dyn Codec + Send + Sync> {
     match kind {
         "json" => Box::new(JsonCodec::new()),
         "syslog" => Box::new(SyslogCodec::new()),
+        "cef" => Box::new(crate::cef::CefCodec::new()),
+        "leef" => Box::new(crate::leef::LeefCodec::new()),
         _ => Box::new(RawCodec::new()),
     }
 }

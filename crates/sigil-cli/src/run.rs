@@ -12,14 +12,17 @@ use sigil_api::auth::AuthState;
 use sigil_api::AlertStore;
 use sigil_cluster::{Role, RoleSet};
 use sigil_config::{Config, InputConfig};
-use sigil_core::{Alert, Codec, Event, Result};
+use sigil_core::{Alert, Capability, Codec, Event, Result};
 use sigil_correlate::{
     build_campaigns, build_incident, BeamSearchSelector, CampaignCandidate, CampaignConfig,
     CausalConfig, HashingEmbedder, Incident,
 };
+use sigil_detect::{build_detector, DetectorChain};
+use sigil_enrich::{build_enricher, EnrichChain, Enricher};
 use sigil_index::{parse_duration_micros, Analytics, ColumnarStore, EventIndex};
 use sigil_ingest::{build_codec, spawn_syslog_tcp, spawn_syslog_udp, FileTailer, TemplateMiner};
 use sigil_normalize::Normalizer;
+use sigil_plugin_wasm::CapabilityPolicy;
 use sigil_sigma::SigmaEngine;
 use sigil_store::Store;
 use tokio::sync::mpsc;
@@ -63,6 +66,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     let analytics = Analytics::new(cfg.index.resolved_cold_path());
     let retention_micros = parse_duration_micros(&cfg.index.retention.cold);
     let normalizer = Normalizer::new(TENANT);
+    let enrich_chain = build_enrich_chain(&cfg);
 
     // Durable store (alert triage + saved objects); hydrate the in-memory ring.
     let store = Arc::new(Store::open(
@@ -84,6 +88,8 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     // Detection engine, shared with the API so rule edits take effect live.
     let engine = Arc::new(RwLock::new(build_engine(&cfg)?));
     let engine_len = engine.read().unwrap().len();
+    // Custom detectors evaluated after Sigma on the same detection path.
+    let detectors = build_detector_chain(&cfg);
 
     // Resolve this node's roles (DESIGN §4.1). Monolith = all roles.
     let (roles, unknown) = RoleSet::from_targets(&cfg.cluster.targets);
@@ -97,7 +103,8 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
 
     let index_sources = sources_routed_to(&cfg, "index");
     let sigma_sources = sources_routed_to(&cfg, "sigma");
-    let sigma_active = cfg.sigma.enabled && engine_len > 0;
+    // Run the detection path if Sigma has rules or any custom detector is set.
+    let sigma_active = cfg.sigma.enabled && (engine_len > 0 || !detectors.is_empty());
 
     let (tx, mut rx) = mpsc::channel::<RawFrame>(8192);
 
@@ -165,10 +172,10 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
             frame = rx.recv() => {
                 match frame {
                     Some(frame) => {
-                        for mut event in decode_normalize(&mut codecs, &normalizer, &frame)? {
+                        for mut event in decode_normalize(&mut codecs, &normalizer, &enrich_chain, &frame)? {
                             event.template_id = Some(miner.mine(&event.message).template_id);
                             if frame.should_sigma {
-                                detect(&engine, &event, &alerts, &outputs).await;
+                                detect(&engine, &detectors, &event, &alerts, &outputs).await;
                             }
                             if frame.should_index {
                                 index.add(&event)?;
@@ -240,15 +247,18 @@ fn roll(store: &ColumnarStore, buffer: &mut Vec<Event>) -> Result<()> {
     Ok(())
 }
 
-/// Run the Sigma engine over one event, recording + emitting any alerts. The
-/// engine is read-locked briefly (rule edits via the API take the write lock).
+/// Run the Sigma engine + custom detectors over one event, recording +
+/// emitting any alerts. The engine is read-locked briefly (rule edits via the
+/// API take the write lock).
 async fn detect(
     engine: &Arc<RwLock<SigmaEngine>>,
+    detectors: &DetectorChain,
     event: &Event,
     store: &AlertStore,
     outputs: &Outputs,
 ) {
-    let alerts = engine.read().unwrap().eval(event);
+    let mut alerts = engine.read().unwrap().eval(event);
+    alerts.extend(detectors.eval(event));
     for alert in alerts {
         tracing::info!(
             rule = %alert.rule_id,
@@ -262,18 +272,82 @@ async fn detect(
     }
 }
 
-/// Decode + normalize one frame into events.
+/// Decode + normalize + enrich one frame into events. Enrichment runs on the
+/// hot path after normalize and before index/Sigma (DESIGN §5).
 fn decode_normalize(
     codecs: &mut CodecCache,
     normalizer: &Normalizer,
+    chain: &EnrichChain,
     frame: &RawFrame,
 ) -> Result<Vec<Event>> {
     let codec = codecs.get(&frame.codec_kind);
     let records = codec.decode(&frame.bytes)?;
     Ok(records
         .into_iter()
-        .map(|r| normalizer.normalize(r, &frame.codec_kind))
+        .map(|r| {
+            let mut event = normalizer.normalize(r, &frame.codec_kind);
+            chain.apply(&mut event);
+            event
+        })
         .collect())
+}
+
+/// Build the enrichment chain from the config's pipeline `enrich:` steps.
+///
+/// Capabilities are enforced deny-by-default: the policy grants the
+/// `enrich:`/`read:field:` capabilities the configured enrichers request but
+/// **never `net:egress`**, so an enricher that wants to phone out from the hot
+/// path is refused unless that's deliberately granted (Phase D+).
+fn build_enrich_chain(cfg: &Config) -> EnrichChain {
+    let mut built: Vec<Box<dyn Enricher>> = Vec::new();
+    for (name, settings) in cfg.enrich_steps() {
+        if let Some(enricher) = build_enricher(&name, &settings) {
+            built.push(enricher);
+        }
+    }
+    if built.is_empty() {
+        return EnrichChain::default();
+    }
+
+    let mut granted: Vec<Capability> = Vec::new();
+    for e in &built {
+        for c in e.capabilities() {
+            if c != Capability::NetEgress && !granted.contains(&c) {
+                granted.push(c);
+            }
+        }
+    }
+    let policy = CapabilityPolicy::new(granted);
+    let allowed: Vec<Box<dyn Enricher>> = built
+        .into_iter()
+        .filter(|e| match policy.check(&e.capabilities()) {
+            Ok(()) => true,
+            Err(denied) => {
+                tracing::warn!(enricher = e.name(), denied = ?denied, "enricher denied capabilities; skipping");
+                false
+            }
+        })
+        .collect();
+
+    let chain = EnrichChain::new(allowed);
+    if !chain.is_empty() {
+        tracing::info!(enrichers = ?chain.names(), "enrichment chain active");
+    }
+    chain
+}
+
+/// Build the custom-detector chain from the config's top-level `detectors:`.
+fn build_detector_chain(cfg: &Config) -> DetectorChain {
+    let built = cfg
+        .detector_steps()
+        .into_iter()
+        .filter_map(|(name, settings)| build_detector(&name, &settings))
+        .collect::<Vec<_>>();
+    let chain = DetectorChain::new(built);
+    if !chain.is_empty() {
+        tracing::info!(detectors = ?chain.names(), "custom detector chain active");
+    }
+    chain
 }
 
 /// Build the Sigma engine from config (loads `sigma.rules_dir` if set).
@@ -567,6 +641,71 @@ mod tests {
 
     fn store(dir: &std::path::Path) -> ColumnarStore {
         ColumnarStore::open(dir.join("cold"), dir.join("catalog.json")).unwrap()
+    }
+
+    #[test]
+    fn enrich_chain_from_config_applies_in_order() {
+        let cfg = Config::parse(
+            r#"
+version: 1
+inputs:
+  - id: a
+    type: file
+    path: /tmp/x
+    codec: { type: json }
+pipelines:
+  - id: p
+    from: [a]
+    steps:
+      - normalize: { schema: ocsf }
+      - enrich: [redact, entropy]
+    route:
+      - to: index
+"#,
+        )
+        .unwrap();
+        let chain = build_enrich_chain(&cfg);
+        assert_eq!(chain.names(), vec!["redact", "entropy"]);
+
+        let mut event = Event::new("default");
+        event.message = "user alice@corp.com logged in".into();
+        chain.apply(&mut event);
+        assert_eq!(event.message, "user ***@corp.com logged in");
+    }
+
+    #[test]
+    fn enrich_then_detect_flags_dga_domain() {
+        let cfg = Config::parse(
+            r#"
+version: 1
+inputs:
+  - id: a
+    type: file
+    path: /tmp/x
+    codec: { type: json }
+pipelines:
+  - id: p
+    from: [a]
+    steps:
+      - enrich: [entropy]
+    route:
+      - to: sigma
+detectors: [dga]
+"#,
+        )
+        .unwrap();
+        let enrich = build_enrich_chain(&cfg);
+        let detectors = build_detector_chain(&cfg);
+        assert_eq!(detectors.names(), vec!["dga"]);
+
+        let mut event = Event::new("default");
+        event.target = Some(sigil_core::EntityRef::new(
+            "domain",
+            "a8f3kq9zx2m7wp1r.example.com",
+        ));
+        enrich.apply(&mut event); // stamps dga.score
+        let alerts = detectors.eval(&event);
+        assert!(alerts.iter().any(|a| a.rule_id == "dga-domain"));
     }
 
     #[test]

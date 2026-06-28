@@ -56,7 +56,13 @@ pipelines:
     from: [syslog_main, gcp_audit, aws_events]
     steps:
       - normalize: { schema: ocsf }
-      - enrich: [geoip, threat_intel]
+      # Enrichers run on the hot path after normalize. `redact`/`entropy` are
+      # offline; `threatintel` matches a local IOC feed. `geoip` needs a
+      # MaxMind db (not implemented yet) and is recognized-but-skipped.
+      - enrich:
+          - redact
+          - entropy
+          - { threatintel: { feed: ./configs/iocs.txt } }
     route:
       - to: index
       - to: sigma
@@ -72,6 +78,16 @@ sigma:
   outputs:
     file: data/alerts.jsonl          # append matched alerts as JSON lines
     # webhook: https://hooks.example.com/sigil
+    # slack: https://hooks.slack.com/services/T000/B000/XXXX
+    # pagerduty: { routing_key: "R0UTING_KEY" }
+    # jira: { url: https://org.atlassian.net, project: SEC, user: bot@org, token: "API_TOKEN" }
+    # misp: { url: https://misp.example.com, api_key: "MISP_KEY" }
+
+# Custom (non-Sigma) detectors, evaluated after the Sigma engine. `dga` flags
+# algorithmically-generated domains using the `dga.score` from the `entropy`
+# enricher (so enable `enrich: [entropy]` for it to have signal).
+detectors:
+  - { dga: { threshold: 3.5 } }
 
 correlation:
   enabled: true

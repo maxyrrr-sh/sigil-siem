@@ -6,8 +6,10 @@ members = [
     "crates/sigil-core",
     "crates/sigil-ingest",
     "crates/sigil-normalize",
+    "crates/sigil-enrich",
     "crates/sigil-index",
     "crates/sigil-sigma",
+    "crates/sigil-detect",
     "crates/sigil-graph",
     "crates/sigil-correlate",
     "crates/sigil-correlate-rl",
@@ -28,8 +30,10 @@ default-members = [
     "crates/sigil-core",
     "crates/sigil-ingest",
     "crates/sigil-normalize",
+    "crates/sigil-enrich",
     "crates/sigil-index",
     "crates/sigil-sigma",
+    "crates/sigil-detect",
     "crates/sigil-graph",
     "crates/sigil-correlate",
     "crates/sigil-plugin-wasm",
@@ -90,9 +94,11 @@ sigil-store = { path = "crates/sigil-store" }
 sigil-ml-client = { path = "crates/sigil-ml-client" }
 sigil-ingest = { path = "crates/sigil-ingest" }
 sigil-normalize = { path = "crates/sigil-normalize" }
+sigil-enrich = { path = "crates/sigil-enrich" }
 sigil-index = { path = "crates/sigil-index" }
 sigil-api = { path = "crates/sigil-api" }
 sigil-sigma = { path = "crates/sigil-sigma" }
+sigil-detect = { path = "crates/sigil-detect" }
 sigil-graph = { path = "crates/sigil-graph" }
 sigil-correlate = { path = "crates/sigil-correlate" }
 sigil-cluster = { path = "crates/sigil-cluster" }

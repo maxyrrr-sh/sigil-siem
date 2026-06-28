@@ -14,9 +14,11 @@ sigil-core = { workspace = true }
 sigil-config = { workspace = true }
 sigil-ingest = { workspace = true }
 sigil-normalize = { workspace = true }
+sigil-enrich = { workspace = true }
 sigil-index = { workspace = true }
 sigil-api = { workspace = true }
 sigil-sigma = { workspace = true }
+sigil-detect = { workspace = true }
 sigil-correlate = { workspace = true }
 sigil-cluster = { workspace = true }
 sigil-plugin-wasm = { workspace = true }
@@ -30,6 +32,8 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
