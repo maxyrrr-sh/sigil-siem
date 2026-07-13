@@ -4,6 +4,7 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 description = "Sigil SIEM command-line entrypoint (the `sigil` binary)"
+license = "Apache-2.0"
 
 [[bin]]
 name = "sigil"
@@ -24,6 +25,7 @@ sigil-cluster = { workspace = true }
 sigil-plugin-wasm = { workspace = true }
 sigil-eval = { workspace = true }
 sigil-store = { workspace = true }
+sigil-edr = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
@@ -37,3 +39,21 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+
+[package.metadata.deb]
+name = "sigil"
+maintainer = "Sigil SIEM maintainers"
+copyright = "2026, Sigil SIEM contributors"
+extended-description = """\
+Sigil is an open-source SIEM: a single binary that scales from one node to a \
+cluster, with its own indexer, a native Sigma detection engine, a tiered \
+plugin system, and semantic + causal correlation for multi-stage attack \
+reconstruction."""
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/sigil", "usr/bin/sigil", "755"],
+    ["../../configs/sigil.yaml", "etc/sigil/sigil.yaml", "644"],
+    ["../../README.md", "usr/share/doc/sigil/README.md", "644"],
+]

@@ -154,3 +154,40 @@ export interface AnalyticsResponse {
   count: number;
   rows: Record<string, unknown>[];
 }
+
+// --- EDR fleet -------------------------------------------------------------
+export interface Agent {
+  agent_id: string;
+  hostname: string;
+  os: string;
+  os_version: string;
+  agent_version: string;
+  enrolled_ts: number;
+  last_seen: number;
+  connected: boolean;
+  isolated: boolean;
+}
+export interface EdrCommand {
+  command_id: string;
+  agent_id: string;
+  command_type: string;
+  params: Record<string, unknown>;
+  status: string;
+  issued_by: string;
+  issued_ts: number;
+  result_ok?: boolean;
+  result_message?: string;
+  result_bytes?: number;
+  completed_ts?: number;
+}
+export interface AgentsResponse { agents: Agent[]; }
+export interface AgentDetail { agent: Agent; commands: EdrCommand[]; }
+export interface CommandsResponse { commands: EdrCommand[]; }
+export interface EdrActionBody {
+  type: string;
+  pid?: number;
+  hash_sha256?: string;
+  path?: string;
+  max_bytes?: number;
+  allowlist_cidrs?: string[];
+}

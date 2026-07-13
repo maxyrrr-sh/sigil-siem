@@ -1,0 +1,30 @@
+title: Shell Spawned by Office or Browser
+id: edr-0001-suspicious-lineage
+status: experimental
+description: >
+  A command shell or scripting interpreter launched by an office application or
+  browser — a hallmark of macro / exploit-driven execution.
+logsource:
+  category: process_creation
+detection:
+  parent:
+    parent.name|endswith:
+      - winword.exe
+      - excel.exe
+      - powerpnt.exe
+      - outlook.exe
+      - chrome
+      - firefox
+      - Safari
+  child:
+    process.name|endswith:
+      - sh
+      - cmd.exe
+      - powershell.exe
+      - pwsh
+      - python
+  condition: parent and child
+level: high
+tags:
+  - attack.execution
+  - attack.t1059

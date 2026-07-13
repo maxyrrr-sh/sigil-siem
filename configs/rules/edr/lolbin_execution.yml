@@ -1,0 +1,25 @@
+title: Living-off-the-Land Binary Execution
+id: edr-0010-lolbin-exec
+status: experimental
+description: >
+  Execution of a signed system binary commonly abused to proxy execution or
+  download payloads (LOLBins).
+logsource:
+  category: process_creation
+detection:
+  selection:
+    event.kind: process_start
+    process.name|endswith:
+      - certutil.exe
+      - mshta.exe
+      - regsvr32.exe
+      - rundll32.exe
+      - bitsadmin.exe
+      - wmic.exe
+      - cscript.exe
+      - wscript.exe
+  condition: selection
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1218

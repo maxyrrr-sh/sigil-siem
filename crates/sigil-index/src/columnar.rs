@@ -44,6 +44,10 @@ pub fn class_name(c: &OcsfClass) -> &'static str {
         OcsfClass::NetworkActivity => "network_activity",
         OcsfClass::HttpActivity => "http_activity",
         OcsfClass::ApiActivity => "api_activity",
+        OcsfClass::DnsActivity => "dns_activity",
+        OcsfClass::ModuleActivity => "module_activity",
+        OcsfClass::ScheduledJobActivity => "scheduled_job_activity",
+        OcsfClass::RegistryKeyActivity => "registry_key_activity",
         OcsfClass::Other(_) => "other",
     }
 }

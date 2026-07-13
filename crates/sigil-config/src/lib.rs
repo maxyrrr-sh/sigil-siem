@@ -50,6 +50,10 @@ pub struct Config {
     /// or name+settings maps, e.g. `[dga]` or `[{ dga: { threshold: 4.0 } }]`.
     #[serde(default)]
     pub detectors: serde_yaml::Value,
+    /// EDR agent gateway (DESIGN §12 — optional endpoint companion). Disabled
+    /// by default.
+    #[serde(default)]
+    pub edr: EdrConfig,
     /// Permissively-parsed sections not yet wired to behavior (Phases 3+).
     #[serde(default)]
     pub correlation: serde_yaml::Value,
@@ -163,6 +167,45 @@ pub struct UserConfig {
     /// Roles: `viewer`, `analyst`, `admin`.
     #[serde(default)]
     pub roles: Vec<String>,
+}
+
+/// `edr:` block — the EDR agent gateway (DESIGN §12). When `enabled`, a node
+/// holding the `index` role serves a gRPC gateway that enrolled `sigil-agent`
+/// endpoints push telemetry to and receive response commands from. Disabled by
+/// default so the SIEM stays a pure telemetry consumer unless opted in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdrConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// gRPC listen address for the agent gateway.
+    #[serde(default = "default_edr_listen")]
+    pub listen: String,
+    /// PEM server certificate for TLS (recommended for any non-loopback use).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_cert: Option<String>,
+    /// PEM private key paired with `tls_cert`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_key: Option<String>,
+    /// Pre-shared enrollment tokens seeded at startup. Additional tokens can be
+    /// issued at runtime via the admin API.
+    #[serde(default)]
+    pub enrollment_tokens: Vec<String>,
+}
+
+impl Default for EdrConfig {
+    fn default() -> Self {
+        EdrConfig {
+            enabled: false,
+            listen: default_edr_listen(),
+            tls_cert: None,
+            tls_key: None,
+            enrollment_tokens: Vec::new(),
+        }
+    }
+}
+
+fn default_edr_listen() -> String {
+    "0.0.0.0:50055".to_string()
 }
 
 /// `cluster:` block (DESIGN §4). Defaults to a monolith / in-proc node.

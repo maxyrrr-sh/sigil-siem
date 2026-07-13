@@ -1,0 +1,54 @@
+name: Release .deb
+
+on:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    name: Build & publish .deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Determine version
+        id: version
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BASE_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "sigil-cli") | .version')"
+          DEB_VERSION="${BASE_VERSION}~${SHORT_SHA}"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "deb_version=${DEB_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=nightly-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        run: cargo build --release -p sigil-cli
+
+      - name: Build .deb package
+        run: >
+          cargo deb -p sigil-cli --no-build
+          --deb-version "${{ steps.version.outputs.deb_version }}"
+          -o target/debian/sigil.deb
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Sigil ${{ steps.version.outputs.deb_version }}"
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          generate_release_notes: true
+          files: target/debian/sigil.deb

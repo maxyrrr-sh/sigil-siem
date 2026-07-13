@@ -1,0 +1,17 @@
+title: Unusually Long DNS Query
+id: edr-0009-dns-tunneling
+status: experimental
+description: >
+  A DNS query with an unusually long name, consistent with DNS tunneling or
+  data exfiltration over DNS.
+logsource:
+  category: dns_query
+detection:
+  selection:
+    event.kind: dns_query
+    dns.question.name|re: '.{52,}'
+  condition: selection
+level: medium
+tags:
+  - attack.command_and_control
+  - attack.t1071.004

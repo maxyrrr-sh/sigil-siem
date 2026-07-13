@@ -105,3 +105,18 @@ plugins:
     kind: wasm
     path: ./plugins/my_parser.wasm
     capabilities: ["read:field:message"]
+
+# EDR agent gateway (DESIGN §12 — optional endpoint companion). When enabled, a
+# node holding the `index` role serves a gRPC gateway that enrolled `sigil-agent`
+# endpoints push telemetry to and receive response commands from. Disabled by
+# default: the SIEM stays a pure telemetry consumer unless opted in. See
+# docs/EDR.md.
+edr:
+  enabled: false
+  listen: 0.0.0.0:50055
+  # TLS is strongly recommended for any non-loopback deployment.
+  # tls_cert: /etc/sigil/edr-cert.pem
+  # tls_key: /etc/sigil/edr-key.pem
+  # Pre-shared enrollment tokens; issue more at runtime via the admin API
+  # (POST /api/v1/edr/enroll-tokens). Rotate these.
+  enrollment_tokens: []

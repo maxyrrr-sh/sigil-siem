@@ -107,6 +107,10 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     let sigma_active = cfg.sigma.enabled && (engine_len > 0 || !detectors.is_empty());
 
     let (tx, mut rx) = mpsc::channel::<RawFrame>(8192);
+    // Pre-normalized events from the EDR agent gateway enter the pipeline here,
+    // bypassing decode/normalize. `ev_tx` is kept alive for the whole run so
+    // `ev_rx.recv()` pends (rather than closing) when no gateway is active.
+    let (ev_tx, mut ev_rx) = mpsc::channel::<Event>(8192);
 
     // Spawn an input task per configured input. Indexing/detection only run if
     // this node holds the `index` role.
@@ -124,6 +128,35 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     }
     drop(tx); // only input tasks hold senders now
 
+    // EDR agent gateway (DESIGN §12). State is built whenever EDR is enabled so
+    // the API can list agents / issue commands; the gRPC gateway itself only
+    // runs on an `index` node (endpoint telemetry is an indexing concern).
+    let edr_state = if cfg.edr.enabled {
+        match sigil_edr::EdrState::new(store.clone(), &cfg.edr.enrollment_tokens) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::error!(error = %e, "failed to initialize EDR state; EDR disabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(edr) = &edr_state {
+        if run_index {
+            let listen = cfg.edr.listen.clone();
+            let state = edr.clone();
+            let ev_tx = ev_tx.clone();
+            let tenant = TENANT.to_string();
+            let tls = load_edr_tls(&cfg);
+            tokio::spawn(async move {
+                if let Err(e) = sigil_edr::serve(&listen, state, ev_tx, tenant, tls).await {
+                    tracing::error!(error = %e, "EDR agent gateway stopped");
+                }
+            });
+        }
+    }
+
     // Serve the query/alert/analytics API only if this node holds `query`.
     if run_query {
         let mut system = build_system_info(&cfg, &active, engine_len);
@@ -139,6 +172,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
             auth: auth.clone(),
             system: Arc::new(system),
             metrics: metrics.clone(),
+            edr: edr_state.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = sigil_api::serve(&api_addr, state).await {
@@ -166,10 +200,15 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     let mut retention = tokio::time::interval(Duration::from_secs(60));
     let mut dirty = 0usize;
     let mut interrupted = false;
+    // Inputs may drain (e.g. none configured). A query API or EDR gateway keeps
+    // the node — and this loop, which drains EDR telemetry via `ev_rx` — alive
+    // until Ctrl-C. Only a pure batch node (no query, no EDR) exits on drain.
+    let mut inputs_open = true;
+    let serves_long = run_query || edr_state.is_some();
 
     loop {
         tokio::select! {
-            frame = rx.recv() => {
+            frame = rx.recv(), if inputs_open => {
                 match frame {
                     Some(frame) => {
                         for mut event in decode_normalize(&mut codecs, &normalizer, &enrich_chain, &frame)? {
@@ -188,7 +227,33 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
                             }
                         }
                     }
-                    None => break, // all inputs ended
+                    None => {
+                        // All inputs ended. Keep serving (and draining EDR
+                        // telemetry) if this is a long-running node.
+                        inputs_open = false;
+                        if !serves_long {
+                            break;
+                        }
+                        tracing::info!("inputs drained; serving until Ctrl-C");
+                    }
+                }
+            }
+            maybe_event = ev_rx.recv() => {
+                // Pre-normalized EDR agent telemetry: skip decode/normalize, run
+                // the same detect + index tail. The gateway only feeds this on an
+                // index node, so indexing is unconditional here.
+                if let Some(mut event) = maybe_event {
+                    event.template_id = Some(miner.mine(&event.message).template_id);
+                    if sigma_active {
+                        detect(&engine, &detectors, &event, &alerts, &outputs).await;
+                    }
+                    index.add(&event)?;
+                    metrics::counter!("sigil_events_indexed_total").increment(1);
+                    dirty += 1;
+                    buffer.push(event);
+                    if buffer.len() >= ROLL_MAX {
+                        roll(&columnar, &mut buffer)?;
+                    }
                 }
             }
             _ = commit.tick() => {
@@ -368,6 +433,27 @@ fn build_engine(cfg: &Config) -> Result<SigmaEngine> {
         tracing::warn!(rule = %path.display(), error = %err, "skipped rule");
     }
     Ok(engine)
+}
+
+/// Load the EDR gateway's TLS cert+key from config, if both are set. Returns
+/// `None` (plaintext) when unconfigured; a read failure disables TLS with a
+/// warning rather than aborting the node.
+fn load_edr_tls(cfg: &Config) -> Option<(Vec<u8>, Vec<u8>)> {
+    let (cert_path, key_path) = match (&cfg.edr.tls_cert, &cfg.edr.tls_key) {
+        (Some(c), Some(k)) => (c, k),
+        _ => return None,
+    };
+    match (std::fs::read(cert_path), std::fs::read(key_path)) {
+        (Ok(cert), Ok(key)) => Some((cert, key)),
+        _ => {
+            tracing::warn!(
+                cert = %cert_path,
+                key = %key_path,
+                "could not read edr TLS cert/key; gateway will run plaintext"
+            );
+            None
+        }
+    }
 }
 
 /// Outcome of a `replay` run.

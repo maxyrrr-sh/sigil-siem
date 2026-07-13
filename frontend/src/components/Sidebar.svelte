@@ -30,6 +30,12 @@
       ],
     },
     {
+      name: 'Respond',
+      items: [
+        { label: 'Agents (EDR)', path: '/agents', ready: true },
+      ],
+    },
+    {
       name: 'Operate',
       items: [
         { label: 'Data', path: '/data', ready: true },

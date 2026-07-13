@@ -1,0 +1,203 @@
+syntax = "proto3";
+package sigil.edr.v1;
+
+// Sigil EDR agent protocol (DESIGN §12 — optional endpoint companion).
+//
+// `sigil-agent` (the endpoint binary) enrolls once, then holds a long-lived
+// bidirectional `Connect` stream: it pushes endpoint telemetry + command
+// results up, and receives response commands down. The server side lives in
+// `sigil-edr`. Bulk telemetry rides this gRPC surface directly (unlike the ML
+// sidecar, which reserves Arrow Flight for tensors).
+service AgentService {
+  // One-time enrollment: exchange a pre-shared enrollment token for a
+  // server-assigned agent identity + session credential.
+  rpc Enroll(EnrollRequest) returns (EnrollReply);
+
+  // Long-lived control stream. Agent → server: Hello, Heartbeat,
+  // TelemetryBatch, CommandResult. Server → agent: HelloAck, Command,
+  // HeartbeatAck. (Named `Session` rather than `Connect` to avoid colliding
+  // with tonic's generated `Client::connect` constructor.)
+  rpc Session(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// --- enrollment ------------------------------------------------------------
+
+message EnrollRequest {
+  string enrollment_token = 1;
+  string hostname = 2;
+  string os = 3;          // "linux" | "macos" | "windows"
+  string os_version = 4;
+  string agent_version = 5;
+  string fingerprint = 6; // stable machine id (already hashed by the agent)
+}
+
+message EnrollReply {
+  string agent_id = 1;      // server-assigned ULID
+  string session_token = 2; // bearer credential for Connect
+  uint32 heartbeat_secs = 3;
+}
+
+// --- control stream --------------------------------------------------------
+
+message AgentMessage {
+  oneof kind {
+    Hello hello = 1;             // first frame after Connect
+    Heartbeat heartbeat = 2;
+    TelemetryBatch telemetry = 3;
+    CommandResult result = 4;
+  }
+}
+
+message ServerMessage {
+  oneof kind {
+    HelloAck hello_ack = 1;
+    Command command = 2;
+    HeartbeatAck heartbeat_ack = 3;
+  }
+}
+
+message Hello {
+  string agent_id = 1;
+  string session_token = 2;
+}
+message HelloAck {
+  bool ok = 1;
+  string message = 2;
+}
+
+message Heartbeat {
+  uint64 ts = 1;          // epoch micros
+  AgentStats stats = 2;
+}
+message HeartbeatAck { uint64 ts = 1; }
+
+message AgentStats {
+  double cpu = 1;
+  uint64 mem_bytes = 2;
+  uint32 collectors_active = 3;
+  bool isolated = 4;      // host currently network-isolated
+}
+
+// --- telemetry -------------------------------------------------------------
+
+message TelemetryBatch { repeated EndpointEvent events = 1; }
+
+enum EventKind {
+  EVENT_KIND_UNSPECIFIED = 0;
+  PROCESS_START = 1;
+  PROCESS_STOP = 2;
+  FILE_CREATE = 3;
+  FILE_MODIFY = 4;
+  FILE_DELETE = 5;
+  NETWORK_CONNECT = 6;
+  DNS_QUERY = 7;
+  MODULE_LOAD = 8;
+  REGISTRY_SET = 9;
+  PERSISTENCE_ADD = 10;
+}
+
+message EndpointEvent {
+  string id = 1;                    // agent-local ULID (dedup)
+  uint64 ts = 2;                   // epoch micros
+  EventKind kind = 3;
+  Process process = 4;             // actor process
+  Process parent = 5;
+  FileInfo file = 6;
+  NetworkInfo network = 7;
+  DnsInfo dns = 8;
+  ModuleInfo module = 9;
+  RegistryInfo registry = 10;
+  PersistenceInfo persistence = 11;
+  string user = 12;
+  map<string, string> extra = 20;
+}
+
+message Process {
+  uint32 pid = 1;
+  uint32 ppid = 2;
+  string name = 3;
+  string path = 4;
+  string cmdline = 5;
+  string hash_sha256 = 6;
+  string user = 7;
+}
+message FileInfo {
+  string path = 1;
+  string hash_sha256 = 2;
+  uint64 size = 3;
+  string mode = 4;
+}
+message NetworkInfo {
+  string proto = 1;           // "tcp" | "udp"
+  string local_addr = 2;
+  uint32 local_port = 3;
+  string remote_addr = 4;
+  uint32 remote_port = 5;
+  string direction = 6;       // "outbound" | "inbound"
+}
+message DnsInfo {
+  string query = 1;
+  string qtype = 2;
+  repeated string answers = 3;
+}
+message ModuleInfo {
+  string path = 1;
+  string hash_sha256 = 2;
+  uint32 pid = 3;
+}
+message RegistryInfo {
+  string key = 1;
+  string value_name = 2;
+  string value_data = 3;
+}
+message PersistenceInfo {
+  string kind = 1;    // cron | systemd | launchd | scheduled-task | run-key
+  string name = 2;
+  string target = 3;
+}
+
+// --- response commands -----------------------------------------------------
+
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  KILL_PROCESS = 1;
+  QUARANTINE_FILE = 2;
+  ISOLATE_HOST = 3;
+  UNISOLATE_HOST = 4;
+  FETCH_FILE = 5;
+}
+
+message Command {
+  string command_id = 1;
+  CommandType type = 2;
+  KillProcess kill = 3;
+  QuarantineFile quarantine = 4;
+  Isolate isolate = 5;
+  FetchFile fetch = 6;
+}
+
+message KillProcess {
+  uint32 pid = 1;         // kill this pid, and/or...
+  string hash_sha256 = 2; // ...every process whose image matches this hash
+}
+message QuarantineFile {
+  string path = 1;
+  string hash_sha256 = 2;
+}
+message Isolate {
+  // Extra CIDRs the isolated host may still reach. The server control channel
+  // is ALWAYS allowed (added on both ends) so isolation can't sever the agent.
+  repeated string allowlist_cidrs = 1;
+}
+message FetchFile {
+  string path = 1;
+  uint64 max_bytes = 2;
+}
+
+message CommandResult {
+  string command_id = 1;
+  bool ok = 2;
+  string message = 3;
+  bytes payload = 4;      // FetchFile contents (bounded by max_bytes)
+  uint64 ts = 5;
+}

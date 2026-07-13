@@ -37,6 +37,15 @@ pub enum OcsfClass {
     HttpActivity,
     /// 6003 — API Activity (cloud audit logs).
     ApiActivity,
+    /// 4003 — DNS Activity (endpoint/network DNS queries).
+    DnsActivity,
+    /// 1005 — Module Activity (image/DLL/.so load).
+    ModuleActivity,
+    /// 1006 — Scheduled Job Activity (cron/systemd/launchd/scheduled-task,
+    /// used for persistence telemetry).
+    ScheduledJobActivity,
+    /// 201002 — Registry Key Activity (Windows registry).
+    RegistryKeyActivity,
     /// 1008 — generic/unknown; carries the raw `class_uid` we couldn't map.
     Other(u32),
 }
@@ -58,6 +67,10 @@ impl OcsfClass {
             OcsfClass::NetworkActivity => 4001,
             OcsfClass::HttpActivity => 4002,
             OcsfClass::ApiActivity => 6003,
+            OcsfClass::DnsActivity => 4003,
+            OcsfClass::ModuleActivity => 1005,
+            OcsfClass::ScheduledJobActivity => 1006,
+            OcsfClass::RegistryKeyActivity => 201002,
             OcsfClass::Other(uid) => *uid,
         }
     }

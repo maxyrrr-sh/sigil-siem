@@ -1,0 +1,23 @@
+title: Module Loaded from Temporary Path
+id: edr-0008-suspicious-module
+status: experimental
+description: >
+  A shared library / DLL loaded from a world-writable or temporary directory —
+  indicative of DLL side-loading or injected code.
+logsource:
+  category: image_load
+detection:
+  selection:
+    event.kind: module_load
+    module.path|contains:
+      - /tmp/
+      - /dev/shm/
+      - /var/tmp/
+      - \Temp\
+      - \Users\Public\
+      - \AppData\Local\Temp
+  condition: selection
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1574

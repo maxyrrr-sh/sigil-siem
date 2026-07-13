@@ -1,0 +1,24 @@
+title: Shell Interpreter Making Outbound Connection
+id: edr-0005-reverse-shell
+status: experimental
+description: >
+  A shell or scripting interpreter opening an outbound network connection —
+  consistent with a reverse shell or C2 beacon.
+logsource:
+  category: network_connection
+detection:
+  selection:
+    event.kind: network_connect
+    process.name|endswith:
+      - sh
+      - bash
+      - zsh
+      - ncat
+      - nc
+      - python
+      - perl
+  condition: selection
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1071

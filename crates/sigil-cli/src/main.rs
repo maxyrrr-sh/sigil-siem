@@ -104,6 +104,74 @@ enum Command {
         #[command(subcommand)]
         action: AuthAction,
     },
+    /// EDR fleet management (DESIGN §12): agents, response actions, tokens.
+    Edr {
+        #[command(subcommand)]
+        action: EdrAction,
+    },
+}
+
+const DEFAULT_API_BASE: &str = "http://127.0.0.1:8080/api/v1";
+
+#[derive(Subcommand)]
+enum EdrAction {
+    /// List enrolled agents + status.
+    Agents {
+        #[arg(long, default_value = DEFAULT_API_BASE)]
+        api: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Show one agent's detail + recent commands.
+    Agent {
+        /// Agent id.
+        id: String,
+        #[arg(long, default_value = DEFAULT_API_BASE)]
+        api: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Issue a response action to an agent (requires analyst).
+    Action {
+        /// Target agent id.
+        agent: String,
+        /// One of: kill_process, quarantine_file, isolate_host, unisolate_host, fetch_file.
+        action_type: String,
+        #[arg(long)]
+        pid: Option<u32>,
+        #[arg(long)]
+        hash: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        max_bytes: Option<u64>,
+        /// Extra allowlist CIDR for isolate (repeatable).
+        #[arg(long = "allow")]
+        allow: Vec<String>,
+        #[arg(long, default_value = DEFAULT_API_BASE)]
+        api: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// List the response-command audit trail.
+    Commands {
+        /// Filter to one agent id.
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long, default_value = DEFAULT_API_BASE)]
+        api: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Issue a new enrollment token (requires admin).
+    Token {
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long, default_value = DEFAULT_API_BASE)]
+        api: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -191,6 +259,104 @@ fn dispatch(cli: Cli) -> sigil_core::Result<ExitCode> {
         }
         Command::Config { action } => cmd_config(action),
         Command::Auth { action } => cmd_auth(action),
+        Command::Edr { action } => tokio_runtime()?.block_on(cmd_edr(action)),
+    }
+}
+
+/// Build a request with an optional bearer token.
+fn edr_req(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    token: &Option<String>,
+) -> reqwest::RequestBuilder {
+    let mut b = client.request(method, url);
+    if let Some(t) = token {
+        b = b.bearer_auth(t);
+    }
+    b
+}
+
+/// Send a request, print the JSON body, and map HTTP errors to a non-zero exit.
+async fn edr_send(req: reqwest::RequestBuilder) -> sigil_core::Result<ExitCode> {
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| sigil_core::Error::Backend(format!("request failed: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let pretty = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+        .unwrap_or(text);
+    println!("{pretty}");
+    if status.is_success() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        eprintln!("HTTP {status}");
+        Ok(ExitCode::FAILURE)
+    }
+}
+
+async fn cmd_edr(action: EdrAction) -> sigil_core::Result<ExitCode> {
+    let client = reqwest::Client::new();
+    match action {
+        EdrAction::Agents { api, token } => {
+            edr_send(edr_req(
+                &client,
+                reqwest::Method::GET,
+                &format!("{api}/edr/agents"),
+                &token,
+            ))
+            .await
+        }
+        EdrAction::Agent { id, api, token } => {
+            let url = format!("{api}/edr/agents/{id}");
+            edr_send(edr_req(&client, reqwest::Method::GET, &url, &token)).await
+        }
+        EdrAction::Action {
+            agent,
+            action_type,
+            pid,
+            hash,
+            path,
+            max_bytes,
+            allow,
+            api,
+            token,
+        } => {
+            let mut body = serde_json::json!({ "type": action_type });
+            let map = body.as_object_mut().unwrap();
+            if let Some(p) = pid {
+                map.insert("pid".into(), p.into());
+            }
+            if let Some(h) = hash {
+                map.insert("hash_sha256".into(), h.into());
+            }
+            if let Some(p) = path {
+                map.insert("path".into(), p.into());
+            }
+            if let Some(m) = max_bytes {
+                map.insert("max_bytes".into(), m.into());
+            }
+            if !allow.is_empty() {
+                map.insert("allowlist_cidrs".into(), allow.into());
+            }
+            let url = format!("{api}/edr/agents/{agent}/actions");
+            edr_send(edr_req(&client, reqwest::Method::POST, &url, &token).json(&body)).await
+        }
+        EdrAction::Commands { agent, api, token } => {
+            let mut url = format!("{api}/edr/commands");
+            if let Some(a) = agent {
+                url.push_str(&format!("?agent={a}"));
+            }
+            edr_send(edr_req(&client, reqwest::Method::GET, &url, &token)).await
+        }
+        EdrAction::Token { label, api, token } => {
+            let body = serde_json::json!({ "label": label.unwrap_or_else(|| "cli".into()) });
+            let url = format!("{api}/edr/enroll-tokens");
+            edr_send(edr_req(&client, reqwest::Method::POST, &url, &token).json(&body)).await
+        }
     }
 }
 

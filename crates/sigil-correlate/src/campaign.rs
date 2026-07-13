@@ -200,6 +200,10 @@ fn class_token(event: &Event) -> &'static str {
         NetworkActivity => "network_activity",
         HttpActivity => "http_activity",
         ApiActivity => "api_activity",
+        DnsActivity => "dns_activity",
+        ModuleActivity => "module_activity",
+        ScheduledJobActivity => "scheduled_job_activity",
+        RegistryKeyActivity => "registry_key_activity",
         Other(_) => "other",
     }
 }

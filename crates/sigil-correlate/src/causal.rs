@@ -103,6 +103,10 @@ fn label_for(e: &Event) -> String {
         OcsfClass::NetworkActivity => "network_activity",
         OcsfClass::HttpActivity => "http_activity",
         OcsfClass::ApiActivity => "api_activity",
+        OcsfClass::DnsActivity => "dns_activity",
+        OcsfClass::ModuleActivity => "module_activity",
+        OcsfClass::ScheduledJobActivity => "scheduled_job_activity",
+        OcsfClass::RegistryKeyActivity => "registry_key_activity",
         OcsfClass::Other(_) => "other",
     };
     match &e.actor {

@@ -1,0 +1,20 @@
+title: New Cron or Systemd Persistence
+id: edr-0006-persistence-unix
+status: experimental
+description: >
+  A new cron job or systemd unit appeared — a common Linux persistence
+  mechanism.
+logsource:
+  category: persistence
+detection:
+  selection:
+    event.kind: persistence_add
+    persistence.kind:
+      - cron
+      - systemd
+  condition: selection
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1053
+  - attack.t1543

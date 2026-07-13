@@ -13,6 +13,7 @@ sigil-sigma = { workspace = true }
 sigil-eval = { workspace = true }
 sigil-config = { workspace = true }
 sigil-store = { workspace = true }
+sigil-edr = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

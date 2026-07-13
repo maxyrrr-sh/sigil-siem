@@ -1,0 +1,14 @@
+[package]
+name = "sigil-edr-proto"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Shared gRPC wire contract for the Sigil EDR agent protocol (client + server stubs)"
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = "3"

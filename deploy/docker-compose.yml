@@ -1,6 +1,10 @@
 # Sigil SIEM — local dev stack (DESIGN §13.4).
-# Sigil core (monolith) + ML sidecar + MinIO (object store) + Redpanda (bus).
+# Sigil core (monolith) + ML sidecar + MinIO (object store) + Redpanda (bus)
+# + Prometheus/Grafana (self-metrics, DESIGN §15) + optional NATS JetStream
+# (alternative transport backend behind the same `Transport` trait).
 # Run from anywhere:  docker compose -f deploy/docker-compose.yml up --build
+# Include the optional NATS transport:
+#   docker compose -f deploy/docker-compose.yml --profile nats up --build
 services:
   sigil:
     build:
@@ -35,7 +39,7 @@ services:
     environment:
       MINIO_ROOT_USER: sigil
       MINIO_ROOT_PASSWORD: sigil-dev-secret
-    ports: ["9000:9000", "9001:9001"]
+    ports: ["9000:9000", "9001:9001"]   # 9000 = S3 API · 9001 = console
     volumes: ["minio-data:/data"]
 
   redpanda:
@@ -47,6 +51,36 @@ services:
       --advertise-kafka-addr PLAINTEXT://redpanda:9092
     ports: ["9092:9092"]
 
+  # Optional alternative cluster transport (DESIGN §4, ADR §19.2). Not started
+  # by default — enable with `--profile nats`, and point
+  # `cluster.transport.kind: nats` at it instead of `redpanda`.
+  nats:
+    image: nats:latest
+    command: ["-js"]        # JetStream enabled
+    ports: ["4222:4222", "8222:8222"]   # 4222 = client · 8222 = monitoring
+    profiles: ["nats"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["9090:9090"]    # Prometheus UI → http://localhost:9090
+    depends_on: [sigil]
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["3000:3000"]    # Grafana UI → http://localhost:3000
+    depends_on: [prometheus]
+
 volumes:
   minio-data: {}
   sigil-data: {}
+  prometheus-data: {}
+  grafana-data: {}

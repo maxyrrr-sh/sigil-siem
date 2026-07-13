@@ -1,0 +1,29 @@
+title: Shell Spawned by Web Server
+id: edr-0002-webshell-exec
+status: experimental
+description: >
+  A web server or app runtime spawning a command shell, a strong indicator of a
+  web shell or exploited server-side application.
+logsource:
+  category: process_creation
+detection:
+  parent:
+    parent.name|endswith:
+      - nginx
+      - httpd
+      - apache2
+      - php-fpm
+      - java
+      - node
+  child:
+    process.name|endswith:
+      - sh
+      - bash
+      - dash
+      - cmd.exe
+      - powershell.exe
+  condition: parent and child
+level: high
+tags:
+  - attack.execution
+  - attack.t1059

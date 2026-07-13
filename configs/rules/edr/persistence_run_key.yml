@@ -1,0 +1,20 @@
+title: Windows Run Key Persistence
+id: edr-0007-persistence-run-key
+status: experimental
+description: >
+  A value written under a Windows `Run`/`RunOnce` registry key — autostart
+  persistence.
+logsource:
+  category: registry_set
+detection:
+  selection:
+    event.kind: registry_set
+    registry.key|contains:
+      - CurrentVersion\Run
+      - CurrentVersion\RunOnce
+      - CurrentVersion\RunServices
+  condition: selection
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1547

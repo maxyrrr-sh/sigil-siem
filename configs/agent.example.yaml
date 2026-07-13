@@ -1,0 +1,39 @@
+# Example sigil-agent configuration (the optional EDR endpoint agent).
+#
+#   sigil-agent enroll --config agent.yaml   # one-time; persists identity
+#   sigil-agent run    --config agent.yaml   # collect + stream + respond
+#
+# The agent is built separately from the SIEM:  cargo build -p sigil-agent
+
+# EDR gateway URL. Use https:// (with tls_ca) for anything beyond loopback.
+server_url: http://127.0.0.1:50055
+
+# Pre-shared enrollment token (used once, at `enroll`). Issue tokens on the
+# server via the admin API or the `edr.enrollment_tokens` config.
+enrollment_token: change-me
+
+# PEM CA bundle to pin the gateway's TLS certificate (required for https://).
+# tls_ca: /etc/sigil/edr-ca.pem
+
+# Collector poll cadence + telemetry batch size.
+poll_interval_secs: 5
+batch_size: 256
+
+# Directories watched for file-integrity monitoring.
+watch_paths:
+  - /etc
+  - /usr/local/bin
+  - /tmp
+
+# Where quarantined files are moved (with permissions stripped; reversible).
+quarantine_dir: /var/lib/sigil-agent/quarantine
+
+# Where the enrollment identity is persisted between runs.
+state_file: /var/lib/sigil-agent/state.json
+
+# Enable/disable individual collectors.
+collectors:
+  process: true
+  file: true
+  network: true
+  persistence: true

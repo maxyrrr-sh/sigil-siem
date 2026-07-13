@@ -220,6 +220,9 @@ pub struct ApiState {
     pub system: Arc<SystemInfo>,
     /// Prometheus render handle (for `GET /metrics`).
     pub metrics: Option<Arc<PrometheusHandle>>,
+    /// EDR fleet state (agents / commands / enrollment tokens), when the EDR
+    /// module is enabled. Powers the `/edr/*` control routes.
+    pub edr: Option<Arc<sigil_edr::EdrState>>,
 }
 
 /// Build the API router over the shared application state.
@@ -248,6 +251,12 @@ pub fn router(state: ApiState) -> Router {
         .route("/attack/coverage", get(attack_coverage))
         .route("/saved/:kind", get(saved_list).post(saved_create))
         .route("/saved/:kind/:id", put(saved_update).delete(saved_delete))
+        .route("/edr/agents", get(edr_agents))
+        .route("/edr/agents/:id", get(edr_agent))
+        .route("/edr/agents/:id/actions", post(edr_action))
+        .route("/edr/commands", get(edr_commands))
+        .route("/edr/enroll-tokens", get(edr_tokens).post(edr_token_create))
+        .route("/edr/stream/agents", get(edr_stream_agents))
         .route("/system", get(system_handler))
         .route("/eval", get(eval_handler))
         .route("/sql", get(sql_handler))
@@ -980,6 +989,176 @@ async fn stream_alerts(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+// --- EDR fleet (agents / commands / enrollment tokens) ---------------------
+
+#[derive(Debug, Deserialize)]
+struct EdrActionBody {
+    #[serde(rename = "type")]
+    action: String,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    hash_sha256: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+    #[serde(default)]
+    allowlist_cidrs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EdrTokenBody {
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EdrCommandsParams {
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// List enrolled agents + live status (any authenticated role).
+async fn edr_agents(State(state): State<ApiState>) -> Response {
+    let Some(edr) = &state.edr else {
+        return conflict("EDR is not enabled");
+    };
+    match edr.registry.list() {
+        Ok(agents) => Json(serde_json::json!({ "agents": agents })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// One agent's detail plus its recent command history.
+async fn edr_agent(State(state): State<ApiState>, Path(id): Path<String>) -> Response {
+    let Some(edr) = &state.edr else {
+        return conflict("EDR is not enabled");
+    };
+    let agent = match edr.registry.get(&id) {
+        Ok(Some(a)) => a,
+        Ok(None) => return not_found("agent not found"),
+        Err(e) => return error_response(e),
+    };
+    let commands = edr.queue.list(50, Some(&id)).unwrap_or_default();
+    Json(serde_json::json!({ "agent": agent, "commands": commands })).into_response()
+}
+
+/// Enqueue a response action for an agent (analyst+). Delivered over the live
+/// stream if connected, else queued until the agent reconnects.
+async fn edr_action(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<EdrActionBody>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Analyst) {
+        return r;
+    }
+    let Some(edr) = &state.edr else {
+        return conflict("EDR is not enabled");
+    };
+    match edr.registry.get(&id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found("agent not found"),
+        Err(e) => return error_response(e),
+    }
+    let params = sigil_edr::CommandParams {
+        pid: body.pid,
+        hash_sha256: body.hash_sha256,
+        path: body.path,
+        max_bytes: body.max_bytes,
+        allowlist_cidrs: body.allowlist_cidrs,
+    };
+    match edr
+        .queue
+        .enqueue(&id, &body.action, params, &user.username)
+        .await
+    {
+        Ok(rec) => {
+            tracing::info!(agent = %id, action = %body.action, by = %user.username, "EDR action queued");
+            (StatusCode::ACCEPTED, Json(rec)).into_response()
+        }
+        Err(sigil_core::Error::Config(m)) => bad_request(&m),
+        Err(e) => error_response(e),
+    }
+}
+
+/// List command audit records (any authenticated role).
+async fn edr_commands(
+    State(state): State<ApiState>,
+    Query(params): Query<EdrCommandsParams>,
+) -> Response {
+    let Some(edr) = &state.edr else {
+        return conflict("EDR is not enabled");
+    };
+    let limit = params.limit.unwrap_or(100).min(1000);
+    match edr.queue.list(limit, params.agent.as_deref()) {
+        Ok(commands) => Json(serde_json::json!({ "commands": commands })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// List issued enrollment tokens (prefixes only; admin).
+async fn edr_tokens(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Admin) {
+        return r;
+    }
+    let Some(edr) = &state.edr else {
+        return conflict("EDR is not enabled");
+    };
+    match edr.tokens.list() {
+        Ok(tokens) => Json(serde_json::json!({ "tokens": tokens })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Issue a new enrollment token, returning the raw value once (admin).
+async fn edr_token_create(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<EdrTokenBody>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Admin) {
+        return r;
+    }
+    let Some(edr) = &state.edr else {
+        return conflict("EDR is not enabled");
+    };
+    let label = body.label.unwrap_or_else(|| "api".into());
+    match edr.tokens.issue(&label, Some(user.username.clone())) {
+        Ok(token) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "token": token, "label": label })),
+        )
+            .into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// SSE stream of the agent fleet, refreshed periodically for live status.
+async fn edr_stream_agents(
+    State(state): State<ApiState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
+    let edr = state.edr.clone();
+    let interval = tokio::time::interval(std::time::Duration::from_secs(3));
+    let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
+        let agents = edr
+            .as_ref()
+            .and_then(|e| e.registry.list().ok())
+            .unwrap_or_default();
+        Ok(SseEvent::default()
+            .json_data(&agents)
+            .unwrap_or_else(|_| SseEvent::default().data("[]")))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 // --- OpenAPI ---------------------------------------------------------------
 
 async fn openapi_handler() -> impl IntoResponse {
@@ -1147,6 +1326,15 @@ fn openapi_doc() -> serde_json::Value {
             "/sql": { "get": { "summary": "SQL query over the cold tier" } },
             "/query": { "get": { "summary": "Pipe-DSL query" } },
             "/stream/alerts": { "get": { "summary": "SSE stream of new alerts" } },
+            "/edr/agents": { "get": { "summary": "List enrolled EDR agents + status" } },
+            "/edr/agents/{id}": { "get": { "summary": "Agent detail + recent commands" } },
+            "/edr/agents/{id}/actions": { "post": { "summary": "Enqueue a response action (analyst)" } },
+            "/edr/commands": { "get": { "summary": "Response-command audit trail" } },
+            "/edr/enroll-tokens": {
+                "get": { "summary": "List enrollment tokens (admin)" },
+                "post": { "summary": "Issue an enrollment token (admin)" }
+            },
+            "/edr/stream/agents": { "get": { "summary": "SSE stream of agent fleet status" } },
         }
     })
 }
@@ -1167,6 +1355,7 @@ mod tests {
             auth: Arc::new(AuthState::from_config(&AuthConfig::default())),
             system: Arc::new(SystemInfo::default()),
             metrics: None,
+            edr: None,
         }
     }
 

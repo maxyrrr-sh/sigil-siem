@@ -12,8 +12,10 @@
 use sigil_core::{Alert, Detector, Event};
 
 pub mod dga;
+pub mod ioc;
 
 pub use dga::DgaDetector;
+pub use ioc::IocDetector;
 
 /// An ordered set of custom detectors evaluated over each event.
 #[derive(Default)]
@@ -51,7 +53,7 @@ impl DetectorChain {
 }
 
 /// The detector names this crate knows how to build.
-pub const KNOWN_DETECTORS: &[&str] = &["dga"];
+pub const KNOWN_DETECTORS: &[&str] = &["dga", "ioc"];
 
 /// Construct a detector by name + settings. Returns `None` (with a warning) for
 /// unknown names so configs stay forward-compatible.
@@ -61,6 +63,16 @@ pub fn build_detector(
 ) -> Option<Box<dyn Detector + Send + Sync>> {
     match name {
         "dga" => Some(Box::new(DgaDetector::from_settings(settings))),
+        "ioc" => {
+            let det = IocDetector::from_settings(settings);
+            if det.is_empty() {
+                tracing::warn!("ioc detector has no indicators loaded; skipping");
+                None
+            } else {
+                tracing::info!(indicators = det.len(), "ioc detector loaded");
+                Some(Box::new(det))
+            }
+        }
         other => {
             tracing::warn!(detector = %other, "unknown detector; skipping");
             None

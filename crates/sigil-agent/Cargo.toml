@@ -1,0 +1,28 @@
+[package]
+name = "sigil-agent"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Sigil EDR endpoint agent: cross-platform telemetry collection + response actions (optional; excluded from the default build)"
+
+[[bin]]
+name = "sigil-agent"
+path = "src/main.rs"
+
+[dependencies]
+sigil-edr-proto = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+ulid = { workspace = true }
+sysinfo = { workspace = true }
+notify = { workspace = true }
+netstat2 = { workspace = true }
+sha2 = { workspace = true }

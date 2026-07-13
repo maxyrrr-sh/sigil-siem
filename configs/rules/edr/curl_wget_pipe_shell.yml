@@ -1,0 +1,25 @@
+title: Download Piped to Shell
+id: edr-0004-curl-pipe-shell
+status: experimental
+description: >
+  A `curl`/`wget` download piped directly into a shell — the classic
+  download-and-execute one-liner.
+logsource:
+  category: process_creation
+detection:
+  downloader:
+    process.command_line|contains:
+      - curl
+      - wget
+  pipe_shell:
+    process.command_line|contains:
+      - '|sh'
+      - '| sh'
+      - '|bash'
+      - '| bash'
+  condition: downloader and pipe_shell
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.t1105

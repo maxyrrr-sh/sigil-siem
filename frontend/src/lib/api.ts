@@ -4,10 +4,15 @@
 // registered unauthorized handler so the app can drop to the login screen.
 
 import type {
+  AgentDetail,
+  AgentsResponse,
   AlertsResponse,
   AnalyticsResponse,
   AttackCoverage,
+  CommandsResponse,
   CountResponse,
+  EdrActionBody,
+  EdrCommand,
   EvalReport,
   FieldsResponse,
   HealthResponse,
@@ -107,6 +112,21 @@ export const api = {
     const tok = getToken();
     const qs = tok ? `?token=${enc(tok)}` : '';
     return new EventSource(BASE + '/stream/alerts' + qs);
+  },
+
+  // EDR fleet
+  edrAgents: () => get<AgentsResponse>('/edr/agents'),
+  edrAgent: (id: string) => get<AgentDetail>(`/edr/agents/${enc(id)}`),
+  edrAction: (id: string, body: EdrActionBody) =>
+    req<EdrCommand>('POST', `/edr/agents/${enc(id)}/actions`, body),
+  edrCommands: (agent?: string) =>
+    get<CommandsResponse>('/edr/commands' + (agent ? `?agent=${enc(agent)}` : '')),
+  edrIssueToken: (label?: string) =>
+    req<{ token: string; label: string }>('POST', '/edr/enroll-tokens', { label }),
+  streamAgents: (): EventSource => {
+    const tok = getToken();
+    const qs = tok ? `?token=${enc(tok)}` : '';
+    return new EventSource(BASE + '/edr/stream/agents' + qs);
   },
 };
 

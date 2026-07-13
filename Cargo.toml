@@ -18,14 +18,19 @@ members = [
     "crates/sigil-config",
     "crates/sigil-store",
     "crates/sigil-ml-client",
+    "crates/sigil-edr-proto",
+    "crates/sigil-edr",
+    "crates/sigil-agent",
     "crates/sigil-api",
     "crates/sigil-eval",
     "crates/sigil-cli",
 ]
 
-# `sigil-correlate-rl` is an OPTIONAL module (GRAIN-style RL path selection,
-# DESIGN §9.5). It is intentionally excluded from the default build so the core
-# never depends on it. Build it explicitly:  cargo build -p sigil-correlate-rl
+# `sigil-correlate-rl` (GRAIN-style RL path selection, DESIGN §9.5) and
+# `sigil-agent` (the endpoint EDR agent, DESIGN §12) are OPTIONAL modules,
+# intentionally excluded from the default build so the core SIEM never depends
+# on them and their heavy platform deps (sysinfo/notify/netstat2) stay out of
+# CI. Build them explicitly, e.g.  cargo build -p sigil-agent
 default-members = [
     "crates/sigil-core",
     "crates/sigil-ingest",
@@ -41,6 +46,8 @@ default-members = [
     "crates/sigil-config",
     "crates/sigil-store",
     "crates/sigil-ml-client",
+    "crates/sigil-edr-proto",
+    "crates/sigil-edr",
     "crates/sigil-api",
     "crates/sigil-eval",
     "crates/sigil-cli",
@@ -82,11 +89,17 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 tower = "0.4"
 metrics = "0.23"
 metrics-exporter-prometheus = { version = "0.15", default-features = false }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls"] }
 tonic-build = "0.12"
 prost = "0.13"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tempfile = "3"
+# EDR agent (optional; heavy platform deps kept out of the default build)
+sysinfo = "0.32"
+notify = "6"
+netstat2 = "0.9"
+sha2 = "0.10"
+dashmap = "6"
 # internal
 sigil-core = { path = "crates/sigil-core" }
 sigil-config = { path = "crates/sigil-config" }
@@ -104,6 +117,8 @@ sigil-correlate = { path = "crates/sigil-correlate" }
 sigil-cluster = { path = "crates/sigil-cluster" }
 sigil-plugin-wasm = { path = "crates/sigil-plugin-wasm", default-features = false }
 sigil-eval = { path = "crates/sigil-eval" }
+sigil-edr-proto = { path = "crates/sigil-edr-proto" }
+sigil-edr = { path = "crates/sigil-edr" }
 
 [profile.release]
 lto = "thin"

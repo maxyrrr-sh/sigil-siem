@@ -178,6 +178,10 @@ fn action_for(event: &Event) -> String {
         NetworkActivity => "connect",
         HttpActivity => "request",
         ApiActivity => "invoke",
+        DnsActivity => "resolve",
+        ModuleActivity => "load",
+        ScheduledJobActivity => "schedule",
+        RegistryKeyActivity => "modify",
         Other(_) => "event",
     }
     .to_string()

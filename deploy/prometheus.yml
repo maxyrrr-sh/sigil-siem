@@ -1,0 +1,10 @@
+# Scrapes sigil's self-metrics (DESIGN §13.4: EPS, stage lag, queue depth,
+# drop-rate, correlation latency, index size, cache hit-rate).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: sigil
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["sigil:8080"]

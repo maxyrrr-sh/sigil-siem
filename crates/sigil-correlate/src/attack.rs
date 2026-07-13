@@ -42,6 +42,10 @@ pub fn tactic_for_class(class: &OcsfClass) -> &'static str {
         OcsfClass::FileSystemActivity => "collection",
         OcsfClass::HttpActivity => "command-and-control",
         OcsfClass::ApiActivity => "execution",
+        OcsfClass::DnsActivity => "command-and-control",
+        OcsfClass::ModuleActivity => "defense-evasion",
+        OcsfClass::ScheduledJobActivity => "persistence",
+        OcsfClass::RegistryKeyActivity => "persistence",
         OcsfClass::Other(_) => "unknown",
     }
 }

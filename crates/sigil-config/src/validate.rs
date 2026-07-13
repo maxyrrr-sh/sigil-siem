@@ -206,6 +206,37 @@ impl Config {
             }
         }
 
+        // EDR gateway: when enabled, needs a listen addr, warns on plaintext,
+        // and needs a way to enroll agents.
+        if self.edr.enabled {
+            if self.edr.listen.trim().is_empty() {
+                r.error("edr.enabled is true but `edr.listen` is empty");
+            }
+            match (&self.edr.tls_cert, &self.edr.tls_key) {
+                (Some(_), None) | (None, Some(_)) => {
+                    r.error("edr.tls_cert and edr.tls_key must be set together");
+                }
+                (None, None) => {
+                    r.warn(
+                        "edr TLS is not configured; the agent gateway will run plaintext (set edr.tls_cert/tls_key for production)"
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+            if self
+                .edr
+                .enrollment_tokens
+                .iter()
+                .all(|t| t.trim().is_empty())
+            {
+                r.warn(
+                    "edr has no enrollment_tokens; issue one via the admin API before agents can enroll"
+                        .to_string(),
+                );
+            }
+        }
+
         r
     }
 }
