@@ -188,7 +188,51 @@ export interface TokensResponse { tokens: EdrToken[]; }
 
 // --- platform configuration ------------------------------------------------
 export interface ValidationReport { ok: boolean; errors: string[]; warnings: string[]; }
-export interface ConfigResponse { path: string; yaml: string; report: ValidationReport; }
+
+// Structured config mirroring `sigil_config::Config` (secrets redacted on the wire).
+export interface RouteTarget { to: string; }
+export interface CodecConfig { type: string; [k: string]: unknown; }
+export interface InputConfig { id: string; type: string; codec: CodecConfig; path?: string; listen?: string; [k: string]: unknown; }
+export interface PipelineConfig { id: string; from: string[]; steps: unknown[]; route: RouteTarget[]; }
+export interface Retention { hot: string; warm: string; cold: string; }
+export interface IndexConfig { retention: Retention; path?: string | null; cold_path?: string | null; catalog_path?: string | null; }
+export interface AlertOutputs {
+  file?: string | null; webhook?: string | null; slack?: string | null;
+  pagerduty?: unknown; jira?: unknown; misp?: unknown;
+}
+export interface SigmaConfig { enabled: boolean; rulepacks: string[]; rules_dir?: string | null; outputs: AlertOutputs; }
+export interface UserConfig { username: string; password_hash?: string | null; password?: string | null; roles: string[]; }
+export interface AuthConfig { enabled: boolean; jwt_secret: string; token_ttl_secs: number; users: UserConfig[]; }
+export interface EdrConfig { enabled: boolean; listen: string; tls_cert?: string | null; tls_key?: string | null; enrollment_tokens: string[]; }
+export interface ClusterConfig { targets: string[]; nodes: string[]; shards?: number | null; replication?: number | null; object_store: unknown; transport: unknown; }
+export interface PlatformConfig {
+  version: number;
+  cluster: ClusterConfig;
+  inputs: InputConfig[];
+  pipelines: PipelineConfig[];
+  index: IndexConfig;
+  sigma: SigmaConfig;
+  auth: AuthConfig;
+  data_dir?: string | null;
+  ml_sidecar?: string | null;
+  detectors: unknown;
+  correlation: unknown;
+  plugins: unknown[];
+  edr: EdrConfig;
+}
+export interface ConfigMeta {
+  input_kinds: string[]; codecs: string[]; sinks: string[];
+  roles: string[]; cluster_roles: string[]; transports: string[];
+  edr_token_count: number; jwt_secret_set: boolean; users_with_password: string[];
+}
+export interface ConfigResponse {
+  path: string;
+  yaml: string;
+  config?: PlatformConfig | null;
+  meta?: ConfigMeta | null;
+  report: ValidationReport;
+}
+export type ConfigInput = { yaml: string } | { config: PlatformConfig };
 export interface ConfigValidateResponse { report: ValidationReport; }
 export interface ConfigSaveResponse {
   ok: boolean;

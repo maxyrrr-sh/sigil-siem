@@ -14,6 +14,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod auth;
+mod config_ext;
 pub mod dsl;
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
@@ -1167,9 +1168,13 @@ async fn edr_stream_agents(
 
 // --- platform configuration (DESIGN §13) -----------------------------------
 
+/// A config submission: either a raw YAML document (power-user mode, comments
+/// preserved) or a structured `Config` from the form editor.
 #[derive(Debug, Deserialize)]
-struct ConfigBody {
-    yaml: String,
+#[serde(untagged)]
+enum ConfigInput {
+    Yaml { yaml: String },
+    Structured { config: Box<sigil_config::Config> },
 }
 
 /// Parse + semantically validate a config document into a JSON report.
@@ -1183,9 +1188,36 @@ fn config_report(yaml: &str) -> serde_json::Value {
     }
 }
 
-/// Return the running node's declarative config file + its validation report.
-/// Admin only — the raw config includes secrets (jwt secret, credentials,
-/// enrollment tokens).
+/// Read + parse the current on-disk config (for secret merge/restore). Falls
+/// back to a minimal valid config when the file is absent/unparseable (there are
+/// then simply no secrets to merge).
+fn read_current_config(path: &FsPath) -> sigil_config::Config {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| sigil_config::Config::parse(&t).ok())
+        .unwrap_or_else(|| {
+            sigil_config::Config::parse("version: 1").expect("minimal config parses")
+        })
+}
+
+/// Resolve a [`ConfigInput`] into final YAML text with secrets restored/merged
+/// from the current on-disk config.
+fn resolve_config_input(
+    body: ConfigInput,
+    current: &sigil_config::Config,
+) -> Result<String, String> {
+    match body {
+        ConfigInput::Yaml { yaml } => Ok(config_ext::restore_yaml(&yaml, current)),
+        ConfigInput::Structured { config } => {
+            let merged = config_ext::merge_secrets(*config, current);
+            serde_yaml::to_string(&merged).map_err(|e| format!("serialize config: {e}"))
+        }
+    }
+}
+
+/// Return the running node's config: raw (secret-redacted) YAML, the parsed +
+/// redacted structured `config`, form enum `meta`, and a validation `report`.
+/// Admin only.
 async fn config_get(
     State(state): State<ApiState>,
     Extension(user): Extension<AuthUser>,
@@ -1196,37 +1228,39 @@ async fn config_get(
     let Some(path) = &state.config_path else {
         return conflict("this node was not started from a config file");
     };
-    match std::fs::read_to_string(path) {
-        Ok(yaml) => Json(serde_json::json!({
+    let yaml = match std::fs::read_to_string(path) {
+        Ok(y) => y,
+        Err(e) => return error_response(sigil_core::Error::Io(format!("read config: {e}"))),
+    };
+    match sigil_config::Config::parse(&yaml) {
+        Ok(cfg) => {
+            let r = cfg.validate();
+            Json(serde_json::json!({
+                "path": path.display().to_string(),
+                "yaml": config_ext::redact_yaml(&yaml, &cfg),
+                "config": serde_json::to_value(config_ext::redact(&cfg)).ok(),
+                "meta": config_ext::meta(&cfg),
+                "report": { "ok": r.ok(), "errors": r.errors, "warnings": r.warnings },
+            }))
+            .into_response()
+        }
+        // File currently unparseable: expose it raw so the admin can fix it.
+        Err(e) => Json(serde_json::json!({
             "path": path.display().to_string(),
             "yaml": yaml,
-            "report": config_report(&yaml),
+            "config": serde_json::Value::Null,
+            "meta": serde_json::Value::Null,
+            "report": { "ok": false, "errors": [e.to_string()], "warnings": [] },
         }))
         .into_response(),
-        Err(e) => error_response(sigil_core::Error::Io(format!("read config: {e}"))),
     }
 }
 
-/// Validate a submitted config document without saving it (admin).
+/// Validate a submitted config (YAML or structured) without saving it (admin).
 async fn config_validate(
-    State(_state): State<ApiState>,
-    Extension(user): Extension<AuthUser>,
-    Json(body): Json<ConfigBody>,
-) -> Response {
-    if let Err(r) = auth::require(&user, Role::Admin) {
-        return r;
-    }
-    Json(serde_json::json!({ "report": config_report(&body.yaml) })).into_response()
-}
-
-/// Persist a new config document to the source-of-truth file (admin). The
-/// submission is validated first; a rejected config is never written. A backup
-/// of the previous file is kept. Most changes apply on restart (declarative
-/// `apply`, DESIGN §13.2); Sigma rules are hot-reloaded best-effort.
-async fn config_put(
     State(state): State<ApiState>,
     Extension(user): Extension<AuthUser>,
-    Json(body): Json<ConfigBody>,
+    Json(body): Json<ConfigInput>,
 ) -> Response {
     if let Err(r) = auth::require(&user, Role::Admin) {
         return r;
@@ -1234,9 +1268,46 @@ async fn config_put(
     let Some(path) = &state.config_path else {
         return conflict("this node was not started from a config file");
     };
+    let current = read_current_config(path);
+    match resolve_config_input(body, &current) {
+        Ok(yaml) => Json(serde_json::json!({ "report": config_report(&yaml) })).into_response(),
+        Err(e) => Json(serde_json::json!({
+            "report": { "ok": false, "errors": [e], "warnings": [] }
+        }))
+        .into_response(),
+    }
+}
 
-    // Validate before touching disk.
-    let cfg = match sigil_config::Config::parse(&body.yaml) {
+/// Persist a new config (YAML or structured) to the source-of-truth file
+/// (admin). Validated first — a rejected config is never written; the previous
+/// file is backed up. Most changes apply on restart (DESIGN §13.2); Sigma rules
+/// hot-reload best-effort.
+async fn config_put(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<ConfigInput>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Admin) {
+        return r;
+    }
+    let Some(path) = &state.config_path else {
+        return conflict("this node was not started from a config file");
+    };
+    let current = read_current_config(path);
+
+    let yaml = match resolve_config_input(body, &current) {
+        Ok(y) => y,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "ok": false, "applied": false,
+                "report": { "ok": false, "errors": [e], "warnings": [] },
+            }))
+            .into_response()
+        }
+    };
+
+    // Validate the resolved document before touching disk.
+    let cfg = match sigil_config::Config::parse(&yaml) {
         Ok(c) => c,
         Err(e) => {
             return Json(serde_json::json!({
@@ -1258,12 +1329,11 @@ async fn config_put(
     // Back up the previous file, then write the new desired state.
     let backup = PathBuf::from(format!("{}.bak", path.display()));
     let _ = std::fs::copy(path, &backup);
-    if let Err(e) = std::fs::write(path, &body.yaml) {
+    if let Err(e) = std::fs::write(path, &yaml) {
         return error_response(sigil_core::Error::Io(format!("write config: {e}")));
     }
     tracing::info!(path = %path.display(), by = %user.username, "platform config saved via API");
 
-    // Best-effort hot-reload of Sigma rules from the existing rules dir.
     let rules_reloaded = reload_engine(&state).ok();
 
     Json(serde_json::json!({

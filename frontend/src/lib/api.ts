@@ -10,6 +10,7 @@ import type {
   AnalyticsResponse,
   AttackCoverage,
   CommandsResponse,
+  ConfigInput,
   ConfigResponse,
   ConfigSaveResponse,
   ConfigValidateResponse,
@@ -129,11 +130,11 @@ export const api = {
   edrIssueToken: (label?: string) =>
     req<{ token: string; label: string }>('POST', '/edr/enroll-tokens', { label }),
 
-  // platform configuration
+  // platform configuration (accepts raw YAML or a structured config)
   getConfig: () => get<ConfigResponse>('/config'),
-  validateConfig: (yaml: string) =>
-    req<ConfigValidateResponse>('POST', '/config/validate', { yaml }),
-  saveConfig: (yaml: string) => req<ConfigSaveResponse>('PUT', '/config', { yaml }),
+  validateConfig: (body: ConfigInput) =>
+    req<ConfigValidateResponse>('POST', '/config/validate', body),
+  saveConfig: (body: ConfigInput) => req<ConfigSaveResponse>('PUT', '/config', body),
   streamAgents: (): EventSource => {
     const tok = getToken();
     const qs = tok ? `?token=${enc(tok)}` : '';
