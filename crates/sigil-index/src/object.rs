@@ -58,13 +58,21 @@ impl ObjectColdStore {
         endpoint: Option<&str>,
         prefix: Option<&str>,
     ) -> Result<ObjectColdStore> {
-        let mut builder = object_store::aws::AmazonS3Builder::from_env().with_bucket_name(bucket);
-        if let Some(r) = region {
-            builder = builder.with_region(r);
-        }
-        if let Some(e) = endpoint {
-            builder = builder.with_endpoint(e).with_allow_http(true);
-        }
+        // A region must be set or `build()` errors; MinIO ignores its value,
+        // and real S3 users override it via config or `AWS_REGION`.
+        let builder = object_store::aws::AmazonS3Builder::from_env()
+            .with_bucket_name(bucket)
+            .with_region(region.unwrap_or("us-east-1"));
+        let builder = match endpoint {
+            // A custom endpoint means a MinIO/S3-compatible store: allow plain
+            // HTTP and force path-style addressing (`host/bucket/key`), which
+            // MinIO and other non-AWS gateways expect.
+            Some(e) => builder
+                .with_endpoint(e)
+                .with_allow_http(true)
+                .with_virtual_hosted_style_request(false),
+            None => builder,
+        };
         let store = builder.build().map_err(backend)?;
         Ok(ObjectColdStore {
             store: Arc::new(store),

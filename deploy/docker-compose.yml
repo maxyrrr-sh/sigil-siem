@@ -11,12 +11,23 @@ services:
       context: ..
       dockerfile: Dockerfile
     # Uses the image's bundled configs/sigil.yaml (CMD in the Dockerfile).
+    environment:
+      # Credentials for the S3 cold archive (configs/sigil.yaml →
+      # object_store.kind: s3 → the MinIO service). object_store reads the
+      # standard AWS_* env vars, not MINIO_*; these mirror the MinIO root creds.
+      AWS_ACCESS_KEY_ID: sigil
+      AWS_SECRET_ACCESS_KEY: sigil-dev-secret
+      AWS_REGION: us-east-1
+      AWS_ALLOW_HTTP: "true"
     ports:
       - "8080:8080"       # query API / UI  → http://localhost:8080/ui
       - "5514:5514/udp"   # syslog
     volumes:
       - sigil-data:/opt/sigil/data
-    depends_on: [ml-sidecar, minio, redpanda]
+    depends_on:
+      ml-sidecar: { condition: service_started }
+      redpanda: { condition: service_started }
+      createbuckets: { condition: service_completed_successfully }
 
   web:
     build:
@@ -41,6 +52,25 @@ services:
       MINIO_ROOT_PASSWORD: sigil-dev-secret
     ports: ["9000:9000", "9001:9001"]   # 9000 = S3 API · 9001 = console
     volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: wait for MinIO, then create the `sigil-cold` bucket the S3 cold
+  # archive writes to (object_store does not create buckets itself). Exits 0,
+  # gating the `sigil` service via `service_completed_successfully`.
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 sigil sigil-dev-secret &&
+      mc mb --ignore-existing local/sigil-cold &&
+      echo 'bucket sigil-cold ready'
+      "
 
   redpanda:
     image: redpandadata/redpanda:latest

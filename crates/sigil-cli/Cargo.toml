@@ -10,6 +10,12 @@ license = "Apache-2.0"
 name = "sigil"
 path = "src/main.rs"
 
+[features]
+# S3-compatible cold/archive backend (`cluster.object_store: { kind: s3 }`).
+# Passes the feature through to sigil-index so the `sigil` binary can honor an
+# `s3` object store; without it, `kind: s3` configs error at startup.
+s3 = ["sigil-index/s3"]
+
 [dependencies]
 sigil-core = { workspace = true }
 sigil-config = { workspace = true }

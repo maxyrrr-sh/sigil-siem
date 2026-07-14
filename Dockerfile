@@ -14,10 +14,12 @@ WORKDIR /build
 COPY . .
 
 # Release build of just the CLI (pulls sigil-plugin-wasm without the heavy
-# wasmtime runtime via the workspace dep's default-features = false).
+# wasmtime runtime via the workspace dep's default-features = false). The `s3`
+# feature is enabled so the binary can honor an `object_store: { kind: s3 }`
+# config (the bundled configs/sigil.yaml points at the MinIO service).
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --release -p sigil-cli && \
+    cargo build --release -p sigil-cli --features s3 && \
     cp target/release/sigil /usr/local/bin/sigil
 
 # ---- runtime ------------------------------------------------------------
