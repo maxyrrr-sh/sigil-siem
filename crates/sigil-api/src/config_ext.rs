@@ -170,6 +170,34 @@ edr:
     }
 
     #[test]
+    fn structured_config_with_detectors_and_plugins_round_trips() {
+        // Mirrors the API structured path: Config → JSON → Config → YAML → Config.
+        let yaml = r#"
+version: 1
+detectors:
+  - ioc:
+      hashes: ./h.txt
+  - dga:
+      threshold: 4.0
+plugins:
+  - name: p1
+    kind: wasm
+    path: ./p.wasm
+    capabilities: [read:field:message]
+"#;
+        let cfg = Config::parse(yaml).unwrap();
+        let json = serde_json::to_value(&cfg).unwrap();
+        let back: Config = serde_json::from_value(json).unwrap();
+        let yaml2 = serde_yaml::to_string(&back).unwrap();
+        let cfg2 = Config::parse(&yaml2).unwrap();
+
+        let steps = cfg2.detector_steps();
+        assert!(steps.iter().any(|(n, _)| n == "ioc"), "ioc detector lost");
+        assert!(steps.iter().any(|(n, _)| n == "dga"), "dga detector lost");
+        assert_eq!(cfg2.plugins.len(), 1, "plugin lost");
+    }
+
+    #[test]
     fn raw_redact_restore_round_trips() {
         let cfg = Config::parse(cfg_yaml()).unwrap();
         let raw = cfg_yaml();

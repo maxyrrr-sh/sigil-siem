@@ -196,11 +196,18 @@ export interface InputConfig { id: string; type: string; codec: CodecConfig; pat
 export interface PipelineConfig { id: string; from: string[]; steps: unknown[]; route: RouteTarget[]; }
 export interface Retention { hot: string; warm: string; cold: string; }
 export interface IndexConfig { retention: Retention; path?: string | null; cold_path?: string | null; catalog_path?: string | null; }
+export interface PagerDutyOutput { routing_key: string; url?: string | null; }
+export interface JiraOutput { url: string; project: string; user: string; token: string; issue_type?: string | null; }
+export interface MispOutput { url: string; api_key: string; }
 export interface AlertOutputs {
   file?: string | null; webhook?: string | null; slack?: string | null;
-  pagerduty?: unknown; jira?: unknown; misp?: unknown;
+  pagerduty?: PagerDutyOutput | null; jira?: JiraOutput | null; misp?: MispOutput | null;
 }
 export interface SigmaConfig { enabled: boolean; rulepacks: string[]; rules_dir?: string | null; outputs: AlertOutputs; }
+export interface PluginConfig { name: string; kind: string; path: string; capabilities: string[]; }
+// A detector's settings are a permissive bag (threshold, IOC file paths, …).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface DetectorRow { type: string; settings: Record<string, any>; }
 export interface UserConfig { username: string; password_hash?: string | null; password?: string | null; roles: string[]; }
 export interface AuthConfig { enabled: boolean; jwt_secret: string; token_ttl_secs: number; users: UserConfig[]; }
 export interface EdrConfig { enabled: boolean; listen: string; tls_cert?: string | null; tls_key?: string | null; enrollment_tokens: string[]; }
@@ -217,7 +224,7 @@ export interface PlatformConfig {
   ml_sidecar?: string | null;
   detectors: unknown;
   correlation: unknown;
-  plugins: unknown[];
+  plugins: PluginConfig[];
   edr: EdrConfig;
 }
 export interface ConfigMeta {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
-  import type { ValidationReport, SystemInfo, PlatformConfig, ConfigMeta, InputConfig, PipelineConfig, UserConfig } from '../lib/types';
+  import type { ValidationReport, SystemInfo, PlatformConfig, ConfigMeta, InputConfig, PipelineConfig, UserConfig, PluginConfig, DetectorRow } from '../lib/types';
   import States from '../components/States.svelte';
   import Toggle from '../components/config/Toggle.svelte';
   import Field from '../components/config/Field.svelte';
@@ -26,6 +26,36 @@
   let newJwt = $state(''); // blank = keep existing
   let changingJwt = $state(false);
 
+  // Detectors are stored as a permissive YAML value; edit them as typed rows.
+  let detectors = $state<DetectorRow[]>([]);
+  let origDetectors = $state('[]');
+
+  function parseDetectors(v: unknown): DetectorRow[] {
+    const out: DetectorRow[] = [];
+    const push = (item: unknown) => {
+      if (typeof item === 'string') out.push({ type: item, settings: {} });
+      else if (item && typeof item === 'object') {
+        for (const [type, settings] of Object.entries(item as Record<string, unknown>)) {
+          out.push({ type, settings: (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown> });
+        }
+      }
+    };
+    if (Array.isArray(v)) v.forEach(push);
+    else if (v && typeof v === 'object') push(v);
+    return out;
+  }
+  function serializeDetectors(rows: DetectorRow[]): unknown {
+    if (rows.length === 0) return null;
+    return rows.map((r) => ({ [r.type]: Object.keys(r.settings).length ? r.settings : null }));
+  }
+  function newDetector(): DetectorRow {
+    return { type: 'ioc', settings: {} };
+  }
+
+  function newPlugin(): PluginConfig {
+    return { name: '', kind: 'wasm', path: '', capabilities: [] };
+  }
+
   // raw (yaml) state
   let yaml = $state('');
   let yamlOriginal = $state('');
@@ -40,17 +70,18 @@
   let restartRequired = $state(false);
   let debounce: ReturnType<typeof setTimeout> | null = null;
 
-  type SectionId = 'general' | 'inputs' | 'pipelines' | 'detections' | 'detectors' | 'edr' | 'access' | 'storage' | 'cluster';
+  type SectionId = 'general' | 'inputs' | 'pipelines' | 'detections' | 'detectors' | 'edr' | 'access' | 'storage' | 'cluster' | 'plugins';
   const SECTIONS: { id: SectionId; label: string; icon: string; desc: string }[] = [
     { id: 'general', label: 'General', icon: '⚙', desc: 'Node basics — data directory and the optional ML sidecar.' },
     { id: 'inputs', label: 'Data Inputs', icon: '⇥', desc: 'Where telemetry comes from (file tails, syslog).' },
-    { id: 'pipelines', label: 'Pipelines', icon: '⋔', desc: 'How inputs are routed to indexing, detection, and correlation.' },
+    { id: 'pipelines', label: 'Pipelines', icon: '⋔', desc: 'How inputs are enriched and routed to indexing, detection, and correlation.' },
     { id: 'detections', label: 'Detections', icon: '◈', desc: 'The Sigma engine, rule packs, and alert outputs.' },
     { id: 'detectors', label: 'Detectors', icon: '◉', desc: 'Custom detectors beyond Sigma (DGA, IOC matching).' },
     { id: 'edr', label: 'Response (EDR)', icon: '⛨', desc: 'The endpoint agent gateway and enrollment.' },
     { id: 'access', label: 'Access', icon: '⚿', desc: 'Authentication, JWT, and user roles (RBAC).' },
     { id: 'storage', label: 'Storage', icon: '⛁', desc: 'Tiered retention and index paths.' },
     { id: 'cluster', label: 'Cluster', icon: '⬡', desc: 'Node roles, transport, and sharding.' },
+    { id: 'plugins', label: 'Plugins', icon: '⧉', desc: 'WASM plugins and their granted capabilities.' },
   ];
   let section = $state<SectionId>('general');
   let sec = $derived(SECTIONS.find((s) => s.id === section)!);
@@ -66,6 +97,7 @@
     access: ['auth', 'user', 'jwt', 'password', 'role', 'credential'],
     storage: ['retention', 'index', 'cold', 'catalog'],
     cluster: ['cluster', 'transport', 'shard', 'node', 'target'],
+    plugins: ['plugin', 'capabilit', 'wasm'],
   };
   function sectionStatus(id: SectionId): 'ok' | 'warn' | 'error' {
     if (!report) return 'ok';
@@ -79,7 +111,9 @@
   let dirty = $derived(
     mode === 'yaml'
       ? yaml !== yamlOriginal
-      : (config ? JSON.stringify($state.snapshot(config)) !== original : false) || !!newJwt,
+      : (config ? JSON.stringify($state.snapshot(config)) !== original : false) ||
+        !!newJwt ||
+        JSON.stringify($state.snapshot(detectors)) !== origDetectors,
   );
   let hasErrors = $derived(!!report && !report.ok);
 
@@ -99,6 +133,8 @@
       system = sys;
       config = cfg.config ?? null;
       meta = cfg.meta ?? null;
+      detectors = config ? parseDetectors(config.detectors) : [];
+      origDetectors = JSON.stringify(detectors);
       original = config ? JSON.stringify($state.snapshot(config)) : '';
       if (!config) mode = 'yaml'; // unparseable file → raw only
       const q = router.query.get('section') as SectionId | null;
@@ -121,6 +157,7 @@
       if (!u.password_hash) u.password_hash = null;
     }
     c.edr.enrollment_tokens = []; // managed on the EDR page; server keeps existing
+    c.detectors = serializeDetectors($state.snapshot(detectors));
     return { config: c };
   }
 
@@ -145,6 +182,7 @@
   $effect(() => {
     if (mode !== 'form' || !config) return;
     JSON.stringify($state.snapshot(config)); // track deep changes
+    JSON.stringify($state.snapshot(detectors));
     void newJwt;
     if (!ready) return;
     scheduleValidate();
@@ -198,6 +236,21 @@
   }
   function setPipeRoute(p: PipelineConfig, sink: string, on: boolean) {
     p.route = on ? [...p.route.filter((r) => r.to !== sink), { to: sink }] : p.route.filter((r) => r.to !== sink);
+  }
+  function pipeEnrichers(p: PipelineConfig): string {
+    for (const s of p.steps as Record<string, unknown>[]) {
+      if (s && typeof s === 'object' && 'enrich' in s) {
+        const e = s.enrich;
+        const names = Array.isArray(e) ? e.map((x) => (typeof x === 'string' ? x : Object.keys(x)[0])) : [];
+        return names.join(', ');
+      }
+    }
+    return '';
+  }
+  function setPipeEnrichers(p: PipelineConfig, csv: string) {
+    const names = csv.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    const others = (p.steps as Record<string, unknown>[]).filter((s) => !(s && typeof s === 'object' && 'enrich' in s));
+    p.steps = names.length ? [...others, { enrich: names }] : others;
   }
 
   function newInput(): InputConfig {
@@ -350,6 +403,10 @@
                         {/each}
                       </div>
                     </div>
+                    <div class="sub-group">
+                      <div class="grouplabel">Enrichers</div>
+                      <input class="input" value={pipeEnrichers(pipe)} onchange={(e) => setPipeEnrichers(pipe, e.currentTarget.value)} placeholder="geoip, threat_intel, entropy" />
+                    </div>
                   {/snippet}
                 </ListEditor>
 
@@ -365,11 +422,59 @@
                     <Field label="Webhook URL"><input class="input" bind:value={config.sigma.outputs.webhook} placeholder="https://…" /></Field>
                     <Field label="Slack webhook"><input class="input" bind:value={config.sigma.outputs.slack} placeholder="https://hooks.slack.com/…" /></Field>
                   </div>
+                  <div class="integrations">
+                    <div class="intg">
+                      <label class="chk small"><input type="checkbox" checked={!!config.sigma.outputs.pagerduty} onchange={(e) => (config!.sigma.outputs.pagerduty = e.currentTarget.checked ? { routing_key: '', url: null } : null)} /> PagerDuty</label>
+                      {#if config.sigma.outputs.pagerduty}
+                        <Field label="Routing key"><input class="input" bind:value={config.sigma.outputs.pagerduty.routing_key} /></Field>
+                      {/if}
+                    </div>
+                    <div class="intg">
+                      <label class="chk small"><input type="checkbox" checked={!!config.sigma.outputs.jira} onchange={(e) => (config!.sigma.outputs.jira = e.currentTarget.checked ? { url: '', project: '', user: '', token: '', issue_type: null } : null)} /> Jira</label>
+                      {#if config.sigma.outputs.jira}
+                        <div class="rowgrid">
+                          <Field label="URL"><input class="input" bind:value={config.sigma.outputs.jira.url} placeholder="https://org.atlassian.net" /></Field>
+                          <Field label="Project"><input class="input" bind:value={config.sigma.outputs.jira.project} placeholder="SEC" /></Field>
+                          <Field label="User"><input class="input" bind:value={config.sigma.outputs.jira.user} /></Field>
+                          <Field label="API token"><input class="input" type="password" bind:value={config.sigma.outputs.jira.token} /></Field>
+                        </div>
+                      {/if}
+                    </div>
+                    <div class="intg">
+                      <label class="chk small"><input type="checkbox" checked={!!config.sigma.outputs.misp} onchange={(e) => (config!.sigma.outputs.misp = e.currentTarget.checked ? { url: '', api_key: '' } : null)} /> MISP</label>
+                      {#if config.sigma.outputs.misp}
+                        <div class="rowgrid">
+                          <Field label="URL"><input class="input" bind:value={config.sigma.outputs.misp.url} /></Field>
+                          <Field label="API key"><input class="input" type="password" bind:value={config.sigma.outputs.misp.api_key} /></Field>
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
                 </div>
 
               {:else if section === 'detectors'}
-                <p class="muted sm">Custom detectors (<code>dga</code>, <code>ioc</code>) are configured as a list under <code>detectors:</code>. Edit them in <button class="linklike" onclick={() => (mode = 'yaml')}>YAML mode</button> — the structured editor for detectors is coming next.</p>
-                <pre class="preview mono">{JSON.stringify(config.detectors ?? [], null, 2)}</pre>
+                <p class="muted sm">Custom detectors run after the Sigma engine on every event.</p>
+                <ListEditor bind:items={detectors} create={newDetector} addLabel="detector" empty="No custom detectors.">
+                  {#snippet row(d: DetectorRow)}
+                    <Field label="Detector">
+                      <select class="input" bind:value={d.type}>
+                        <option value="dga">dga — algorithmically-generated domains</option>
+                        <option value="ioc">ioc — hash / IP / domain indicator match</option>
+                      </select>
+                    </Field>
+                    {#if d.type === 'dga'}
+                      <Field label="Threshold" hint="bits/char; higher = stricter">
+                        <input class="input" type="number" step="0.1" bind:value={d.settings.threshold} placeholder="3.5" />
+                      </Field>
+                    {:else if d.type === 'ioc'}
+                      <div class="rowgrid">
+                        <Field label="Hashes" hint="file path or list"><input class="input" bind:value={d.settings.hashes} placeholder="./iocs/hashes.txt" /></Field>
+                        <Field label="IPs"><input class="input" bind:value={d.settings.ips} placeholder="./iocs/ips.txt" /></Field>
+                        <Field label="Domains"><input class="input" bind:value={d.settings.domains} placeholder="./iocs/domains.txt" /></Field>
+                      </div>
+                    {/if}
+                  {/snippet}
+                </ListEditor>
 
               {:else if section === 'edr'}
                 <div class="toggle-row"><Toggle bind:checked={config.edr.enabled} label="EDR agent gateway" /></div>
@@ -448,6 +553,21 @@
                   <Field label="Shards"><input class="input" type="number" bind:value={config.cluster.shards} placeholder="8" /></Field>
                   <Field label="Replication"><input class="input" type="number" bind:value={config.cluster.replication} placeholder="1" /></Field>
                 </div>
+
+              {:else if section === 'plugins'}
+                <p class="muted sm">Tier-2 WASM plugins run sandboxed with deny-by-default capabilities (DESIGN §12). Preview a manifest's decision on the <button class="linklike" onclick={() => navigate('/plugins')}>Plugins page</button>.</p>
+                <ListEditor bind:items={config.plugins} create={newPlugin} addLabel="plugin" empty="No plugins configured.">
+                  {#snippet row(p: PluginConfig)}
+                    <div class="rowgrid">
+                      <Field label="Name"><input class="input" bind:value={p.name} placeholder="geoip_enricher" /></Field>
+                      <Field label="Kind"><input class="input" bind:value={p.kind} placeholder="wasm" /></Field>
+                      <Field label="Path"><input class="input" bind:value={p.path} placeholder="./plugins/geoip.wasm" /></Field>
+                    </div>
+                    <Field label="Capabilities" hint="comma-separated · read:field:x, enrich:x, net:egress">
+                      <input class="input" value={p.capabilities.join(', ')} onchange={(e) => (p.capabilities = e.currentTarget.value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean))} placeholder="read:field:source.ip, enrich:geoip" />
+                    </Field>
+                  {/snippet}
+                </ListEditor>
               {/if}
             </div>
 
@@ -534,6 +654,9 @@
   .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
   .chkrow { display: flex; flex-wrap: wrap; gap: 12px; }
   .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+  .chk.small { font-size: 12px; margin-bottom: 8px; }
+  .integrations { display: grid; gap: 12px; margin-top: 14px; }
+  .intg { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
   .secretline { display: flex; align-items: center; gap: 12px; }
   .linklike { background: transparent; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
   .linklike:hover { text-decoration: underline; }
