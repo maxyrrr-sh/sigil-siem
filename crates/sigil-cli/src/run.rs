@@ -173,6 +173,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
             system: Arc::new(system),
             metrics: metrics.clone(),
             edr: edr_state.clone(),
+            config_path: Some(PathBuf::from(config_path)),
         };
         tokio::spawn(async move {
             if let Err(e) = sigil_api::serve(&api_addr, state).await {

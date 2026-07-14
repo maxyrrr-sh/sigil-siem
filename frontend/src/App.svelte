@@ -18,6 +18,7 @@
   import Cluster from './routes/Cluster.svelte';
   import Plugins from './routes/Plugins.svelte';
   import Agents from './routes/Agents.svelte';
+  import Configuration from './routes/Configuration.svelte';
   import Eval from './routes/Eval.svelte';
   import Admin from './routes/Admin.svelte';
   import Placeholder from './routes/Placeholder.svelte';
@@ -61,6 +62,8 @@
       <Plugins />
     {:else if router.path === '/agents'}
       <Agents />
+    {:else if router.path === '/config'}
+      <Configuration />
     {:else if router.path === '/eval'}
       <Eval />
     {:else if router.path === '/admin'}

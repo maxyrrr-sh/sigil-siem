@@ -223,6 +223,10 @@ pub struct ApiState {
     /// EDR fleet state (agents / commands / enrollment tokens), when the EDR
     /// module is enabled. Powers the `/edr/*` control routes.
     pub edr: Option<Arc<sigil_edr::EdrState>>,
+    /// Path of the declarative config file this node was started from. Enables
+    /// the `/config` view/validate/save routes (DESIGN §13: config is the
+    /// source of truth; the UI edits that file).
+    pub config_path: Option<PathBuf>,
 }
 
 /// Build the API router over the shared application state.
@@ -257,6 +261,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/edr/commands", get(edr_commands))
         .route("/edr/enroll-tokens", get(edr_tokens).post(edr_token_create))
         .route("/edr/stream/agents", get(edr_stream_agents))
+        .route("/config", get(config_get).put(config_put))
+        .route("/config/validate", post(config_validate))
         .route("/system", get(system_handler))
         .route("/eval", get(eval_handler))
         .route("/sql", get(sql_handler))
@@ -1159,6 +1165,118 @@ async fn edr_stream_agents(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+// --- platform configuration (DESIGN §13) -----------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ConfigBody {
+    yaml: String,
+}
+
+/// Parse + semantically validate a config document into a JSON report.
+fn config_report(yaml: &str) -> serde_json::Value {
+    match sigil_config::Config::parse(yaml) {
+        Ok(cfg) => {
+            let r = cfg.validate();
+            serde_json::json!({ "ok": r.ok(), "errors": r.errors, "warnings": r.warnings })
+        }
+        Err(e) => serde_json::json!({ "ok": false, "errors": [e.to_string()], "warnings": [] }),
+    }
+}
+
+/// Return the running node's declarative config file + its validation report.
+/// Admin only — the raw config includes secrets (jwt secret, credentials,
+/// enrollment tokens).
+async fn config_get(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Admin) {
+        return r;
+    }
+    let Some(path) = &state.config_path else {
+        return conflict("this node was not started from a config file");
+    };
+    match std::fs::read_to_string(path) {
+        Ok(yaml) => Json(serde_json::json!({
+            "path": path.display().to_string(),
+            "yaml": yaml,
+            "report": config_report(&yaml),
+        }))
+        .into_response(),
+        Err(e) => error_response(sigil_core::Error::Io(format!("read config: {e}"))),
+    }
+}
+
+/// Validate a submitted config document without saving it (admin).
+async fn config_validate(
+    State(_state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<ConfigBody>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Admin) {
+        return r;
+    }
+    Json(serde_json::json!({ "report": config_report(&body.yaml) })).into_response()
+}
+
+/// Persist a new config document to the source-of-truth file (admin). The
+/// submission is validated first; a rejected config is never written. A backup
+/// of the previous file is kept. Most changes apply on restart (declarative
+/// `apply`, DESIGN §13.2); Sigma rules are hot-reloaded best-effort.
+async fn config_put(
+    State(state): State<ApiState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<ConfigBody>,
+) -> Response {
+    if let Err(r) = auth::require(&user, Role::Admin) {
+        return r;
+    }
+    let Some(path) = &state.config_path else {
+        return conflict("this node was not started from a config file");
+    };
+
+    // Validate before touching disk.
+    let cfg = match sigil_config::Config::parse(&body.yaml) {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "ok": false, "applied": false,
+                "report": { "ok": false, "errors": [e.to_string()], "warnings": [] },
+            }))
+            .into_response()
+        }
+    };
+    let report = cfg.validate();
+    if !report.ok() {
+        return Json(serde_json::json!({
+            "ok": false, "applied": false,
+            "report": { "ok": false, "errors": report.errors, "warnings": report.warnings },
+        }))
+        .into_response();
+    }
+
+    // Back up the previous file, then write the new desired state.
+    let backup = PathBuf::from(format!("{}.bak", path.display()));
+    let _ = std::fs::copy(path, &backup);
+    if let Err(e) = std::fs::write(path, &body.yaml) {
+        return error_response(sigil_core::Error::Io(format!("write config: {e}")));
+    }
+    tracing::info!(path = %path.display(), by = %user.username, "platform config saved via API");
+
+    // Best-effort hot-reload of Sigma rules from the existing rules dir.
+    let rules_reloaded = reload_engine(&state).ok();
+
+    Json(serde_json::json!({
+        "ok": true, "applied": true,
+        "report": { "ok": true, "errors": report.errors, "warnings": report.warnings },
+        "backup": backup.display().to_string(),
+        "rules_reloaded": rules_reloaded,
+        "restart_required": true,
+        "message": "Configuration saved. Restart the node to apply changes to inputs, pipelines, cluster, auth, or EDR.",
+    }))
+    .into_response()
+}
+
 // --- OpenAPI ---------------------------------------------------------------
 
 async fn openapi_handler() -> impl IntoResponse {
@@ -1335,6 +1453,11 @@ fn openapi_doc() -> serde_json::Value {
                 "post": { "summary": "Issue an enrollment token (admin)" }
             },
             "/edr/stream/agents": { "get": { "summary": "SSE stream of agent fleet status" } },
+            "/config": {
+                "get": { "summary": "Current platform config file + validation (admin)" },
+                "put": { "summary": "Save a new platform config (admin; validated, backed up)" }
+            },
+            "/config/validate": { "post": { "summary": "Validate a config document without saving (admin)" } },
         }
     })
 }
@@ -1356,6 +1479,7 @@ mod tests {
             system: Arc::new(SystemInfo::default()),
             metrics: None,
             edr: None,
+            config_path: None,
         }
     }
 

@@ -183,6 +183,22 @@ export interface EdrCommand {
 export interface AgentsResponse { agents: Agent[]; }
 export interface AgentDetail { agent: Agent; commands: EdrCommand[]; }
 export interface CommandsResponse { commands: EdrCommand[]; }
+export interface EdrToken { prefix: string; label: string; created_ts: number; created_by?: string; }
+export interface TokensResponse { tokens: EdrToken[]; }
+
+// --- platform configuration ------------------------------------------------
+export interface ValidationReport { ok: boolean; errors: string[]; warnings: string[]; }
+export interface ConfigResponse { path: string; yaml: string; report: ValidationReport; }
+export interface ConfigValidateResponse { report: ValidationReport; }
+export interface ConfigSaveResponse {
+  ok: boolean;
+  applied: boolean;
+  report: ValidationReport;
+  backup?: string;
+  rules_reloaded?: number | null;
+  restart_required?: boolean;
+  message?: string;
+}
 export interface EdrActionBody {
   type: string;
   pid?: number;

@@ -10,9 +10,13 @@ import type {
   AnalyticsResponse,
   AttackCoverage,
   CommandsResponse,
+  ConfigResponse,
+  ConfigSaveResponse,
+  ConfigValidateResponse,
   CountResponse,
   EdrActionBody,
   EdrCommand,
+  TokensResponse,
   EvalReport,
   FieldsResponse,
   HealthResponse,
@@ -121,8 +125,15 @@ export const api = {
     req<EdrCommand>('POST', `/edr/agents/${enc(id)}/actions`, body),
   edrCommands: (agent?: string) =>
     get<CommandsResponse>('/edr/commands' + (agent ? `?agent=${enc(agent)}` : '')),
+  edrTokens: () => get<TokensResponse>('/edr/enroll-tokens'),
   edrIssueToken: (label?: string) =>
     req<{ token: string; label: string }>('POST', '/edr/enroll-tokens', { label }),
+
+  // platform configuration
+  getConfig: () => get<ConfigResponse>('/config'),
+  validateConfig: (yaml: string) =>
+    req<ConfigValidateResponse>('POST', '/config/validate', { yaml }),
+  saveConfig: (yaml: string) => req<ConfigSaveResponse>('PUT', '/config', { yaml }),
   streamAgents: (): EventSource => {
     const tok = getToken();
     const qs = tok ? `?token=${enc(tok)}` : '';

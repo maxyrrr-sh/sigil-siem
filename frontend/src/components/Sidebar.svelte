@@ -41,6 +41,7 @@
         { label: 'Data', path: '/data', ready: true },
         { label: 'Cluster', path: '/cluster', ready: true },
         { label: 'Plugins', path: '/plugins', ready: true },
+        { label: 'Configuration', path: '/config', ready: true },
         { label: 'Evaluation', path: '/eval', ready: true },
         { label: 'Admin', path: '/admin', ready: true },
       ],
