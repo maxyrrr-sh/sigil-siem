@@ -13,6 +13,7 @@ use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use crate::capability::CapabilityPolicy;
 use crate::manifest::WasmManifest;
+use crate::signature::SignaturePolicy;
 
 fn backend<E: std::fmt::Display>(e: E) -> Error {
     Error::Backend(e.to_string())
@@ -29,9 +30,10 @@ pub struct HostCtx {
     pub granted: Vec<Capability>,
 }
 
-/// The WASM host: owns a shared wasmtime engine.
+/// The WASM host: owns a shared wasmtime engine + the signing policy.
 pub struct WasmHost {
     engine: Engine,
+    signatures: SignaturePolicy,
 }
 
 impl Default for WasmHost {
@@ -44,11 +46,20 @@ impl WasmHost {
     pub fn new() -> Self {
         WasmHost {
             engine: Engine::default(),
+            signatures: SignaturePolicy::default(),
         }
     }
 
-    /// Instantiate a plugin after enforcing its capability requests against the
-    /// policy. Errors (without running anything) if any capability is denied.
+    /// Enforce plugin signing: only modules signed by one of the policy's
+    /// trusted keys will instantiate (DESIGN §12.4).
+    pub fn with_signature_policy(mut self, signatures: SignaturePolicy) -> Self {
+        self.signatures = signatures;
+        self
+    }
+
+    /// Instantiate a plugin after enforcing its capability requests against
+    /// the policy and (when enforced) its signature against the trusted keys.
+    /// Errors (without running anything) on any denial.
     pub fn instantiate(
         &self,
         manifest: &WasmManifest,
@@ -68,6 +79,10 @@ impl WasmHost {
             PluginSource::Wat(text) => wat::parse_str(text).map_err(backend)?,
             PluginSource::Wasm(b) => b.clone(),
         };
+        // The signature covers the final wasm bytes we are about to compile.
+        self.signatures
+            .verify(&bytes, manifest.signature.as_deref())
+            .map_err(|e| Error::Other(format!("plugin `{}`: {e}", manifest.name)))?;
         let module = Module::new(&self.engine, &bytes).map_err(backend)?;
 
         let mut store = Store::new(&self.engine, HostCtx { granted: requested });
@@ -153,6 +168,43 @@ mod tests {
             Err(e) => assert!(e.to_string().contains("denied capabilities")),
             Ok(_) => panic!("expected capability denial"),
         }
+    }
+
+    #[test]
+    fn signature_policy_gates_instantiation() {
+        use crate::signature::{public_key_hex, sign_module, SignaturePolicy};
+
+        let secret = [3u8; 32];
+        let host = WasmHost::new().with_signature_policy(
+            SignaturePolicy::from_hex_keys(&[public_key_hex(&secret)]).unwrap(),
+        );
+        let policy = CapabilityPolicy::default();
+
+        // Unsigned plugin: refused before compiling.
+        let err = match host.instantiate(
+            &manifest(&[]),
+            &policy,
+            &PluginSource::Wat(PROCESS_WAT.into()),
+        ) {
+            Err(e) => e,
+            Ok(_) => panic!("unsigned plugin must be refused"),
+        };
+        assert!(err.to_string().contains("unsigned"));
+
+        // Correctly signed plugin (signature covers the compiled wasm bytes).
+        let wasm = wat::parse_str(PROCESS_WAT).unwrap();
+        let mut m = manifest(&[]);
+        m.signature = Some(sign_module(&secret, &wasm));
+        let mut plugin = host
+            .instantiate(&m, &policy, &PluginSource::Wasm(wasm.clone()))
+            .unwrap();
+        assert_eq!(plugin.call_i32("process", 41).unwrap(), 42);
+
+        // Signature from an untrusted key: refused.
+        m.signature = Some(sign_module(&[8u8; 32], &wasm));
+        assert!(host
+            .instantiate(&m, &policy, &PluginSource::Wasm(wasm))
+            .is_err());
     }
 
     #[test]

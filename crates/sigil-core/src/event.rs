@@ -74,6 +74,23 @@ impl OcsfClass {
             OcsfClass::Other(uid) => *uid,
         }
     }
+
+    /// The class for an OCSF `class_uid` (inverse of [`OcsfClass::uid`]).
+    pub fn from_uid(uid: u32) -> OcsfClass {
+        match uid {
+            1001 => OcsfClass::FileSystemActivity,
+            1007 => OcsfClass::ProcessActivity,
+            3002 => OcsfClass::Authentication,
+            4001 => OcsfClass::NetworkActivity,
+            4002 => OcsfClass::HttpActivity,
+            6003 => OcsfClass::ApiActivity,
+            4003 => OcsfClass::DnsActivity,
+            1005 => OcsfClass::ModuleActivity,
+            1006 => OcsfClass::ScheduledJobActivity,
+            201002 => OcsfClass::RegistryKeyActivity,
+            other => OcsfClass::Other(other),
+        }
+    }
 }
 
 /// Normalized severity, aligned to OCSF `severity_id` (0..=6).
@@ -94,6 +111,19 @@ impl Severity {
     /// OCSF `severity_id`.
     pub fn id(&self) -> u8 {
         *self as u8
+    }
+
+    /// The severity for an OCSF `severity_id` (inverse of [`Severity::id`]).
+    pub fn from_id(id: u8) -> Severity {
+        match id {
+            0 => Severity::Unknown,
+            1 => Severity::Informational,
+            2 => Severity::Low,
+            3 => Severity::Medium,
+            4 => Severity::High,
+            5 => Severity::Critical,
+            _ => Severity::Fatal,
+        }
     }
 }
 

@@ -6,7 +6,8 @@
 //! - [`triplet`] — `(subject, action, object)` extraction (§9.2).
 //! - [`embed`] — field-aware embeddings; offline [`embed::HashingEmbedder`] by
 //!   default, sidecar/SecureBERT as a drop-in (§9.3, §9.9).
-//! - [`vector`] — [`vector::VectorStore`] KNN (exact today, HNSW later) (§9.3).
+//! - [`vector`] — [`vector::VectorStore`] KNN: exact ([`FlatVectorStore`]) or
+//!   embedded HNSW ([`HnswVectorStore`], ADR-3) (§9.3).
 //! - [`campaign`] — cross-domain candidate generation: embedding KNN + shared
 //!   entities (via `sigil-graph`) + time window → connected components (§9.4–5).
 //!
@@ -38,4 +39,4 @@ pub use embed::{serialize_event, Embedder, HashingEmbedder};
 pub use incident::{build_incident, Incident, IncidentStep};
 pub use pathselect::BeamSearchSelector;
 pub use triplet::{extract_triplet, Triplet};
-pub use vector::{FlatVectorStore, VectorStore};
+pub use vector::{FlatVectorStore, HnswVectorStore, VectorStore};

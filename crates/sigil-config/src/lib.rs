@@ -2,15 +2,21 @@
 //!
 //! The config file is the source of truth. This crate loads YAML into typed
 //! structs ([`Config`]), runs schema + semantic [`validate`](Config::validate),
-//! and (later) drives `plan`/`apply`/drift. Phase 0 implements load + validate;
-//! the remaining verbs are stubbed in the CLI.
+//! and drives the declarative verbs: [`plan`](Config::plan) /
+//! [`apply`](Config::apply) / [`drift`](Config::drift) against the applied
+//! snapshot (see [`plan`]), plus a generated [JSON Schema](json_schema) for
+//! editor/tooling integration (ADR-4: YAML + JSON Schema).
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub mod plan;
+mod schema;
 mod validate;
+pub use plan::{diff, Change, ConfigDiff};
+pub use schema::json_schema;
 pub use validate::ValidationReport;
 
 /// Sinks a pipeline may route to. Phase 0 only wires `index`.

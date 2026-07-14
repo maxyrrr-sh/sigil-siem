@@ -94,12 +94,15 @@ tonic-build = "0.12"
 prost = "0.13"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tempfile = "3"
+object_store = "0.13"
+bytes = "1"
 # EDR agent (optional; heavy platform deps kept out of the default build)
 sysinfo = "0.32"
 notify = "6"
 netstat2 = "0.9"
 sha2 = "0.10"
 dashmap = "6"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 # internal
 sigil-core = { path = "crates/sigil-core" }
 sigil-config = { path = "crates/sigil-config" }

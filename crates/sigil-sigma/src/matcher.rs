@@ -208,6 +208,16 @@ pub fn resolve_field(event: &Event, name: &str) -> Vec<String> {
                 }
             }
         }
+        "actor" | "actor.name" => {
+            if let Some(a) = &event.actor {
+                push_nonempty(&mut hits, &a.id);
+            }
+        }
+        "target" | "target.name" | "targetobject" => {
+            if let Some(t) = &event.target {
+                push_nonempty(&mut hits, &t.id);
+            }
+        }
         "commandline" | "command_line" | "cmd" => push_nonempty(&mut hits, &event.message),
         _ => {}
     }

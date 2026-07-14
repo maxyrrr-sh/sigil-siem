@@ -107,6 +107,18 @@ impl Catalog {
             .collect()
     }
 
+    /// Move a segment to another tier/location (warm→cold migration) and
+    /// persist. Returns false if the id is unknown.
+    pub fn migrate(&mut self, id: &str, tier: Tier, path: String) -> Result<bool> {
+        let Some(seg) = self.segments.iter_mut().find(|s| s.id == id) else {
+            return Ok(false);
+        };
+        seg.tier = tier;
+        seg.path = path;
+        self.save()?;
+        Ok(true)
+    }
+
     /// Delete the given segments from the catalog and remove their files.
     pub fn remove(&mut self, ids: &[String]) -> Result<usize> {
         let mut removed = 0;
@@ -148,12 +160,14 @@ pub fn parse_duration_micros(s: &str) -> Option<i64> {
     Some(n * per)
 }
 
-/// Build a [`SegmentMeta`] from a freshly written segment's events.
+/// Build a [`SegmentMeta`] for a freshly written segment. New segments are
+/// **warm**: local Parquet that DataFusion scans directly; they migrate to
+/// the cold object-store archive when they age past the warm window.
 pub fn segment_meta(id: String, path: &Path, min_ts: i64, max_ts: i64, rows: usize) -> SegmentMeta {
     SegmentMeta {
         id,
         path: path.to_string_lossy().to_string(),
-        tier: Tier::Cold,
+        tier: Tier::Warm,
         min_ts,
         max_ts,
         rows,

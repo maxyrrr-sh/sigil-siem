@@ -1,0 +1,20 @@
+# Sigma correlation (meta) rule: many failed SSH logins for the same user
+# within a short window. References the base rule by its `id`; the base
+# rule's own alerts are suppressed in favor of this aggregate one (set
+# `generate: true` under `correlation:` to keep both).
+title: SSH Brute Force (many failed passwords per user)
+id: corr-ssh-brute-force
+status: experimental
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1110
+correlation:
+  type: event_count
+  rules:
+    - 0d1b2c3a-ssh-failed-password
+  group-by:
+    - user.name
+  timespan: 10m
+  condition:
+    gte: 5

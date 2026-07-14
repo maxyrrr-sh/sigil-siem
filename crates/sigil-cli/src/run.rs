@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use sigil_api::auth::AuthState;
@@ -19,11 +19,11 @@ use sigil_correlate::{
 };
 use sigil_detect::{build_detector, DetectorChain};
 use sigil_enrich::{build_enricher, EnrichChain, Enricher};
-use sigil_index::{parse_duration_micros, Analytics, ColumnarStore, EventIndex};
+use sigil_index::{parse_duration_micros, Analytics, ColumnarStore, EventIndex, ObjectColdStore};
 use sigil_ingest::{build_codec, spawn_syslog_tcp, spawn_syslog_udp, FileTailer, TemplateMiner};
 use sigil_normalize::Normalizer;
 use sigil_plugin_wasm::CapabilityPolicy;
-use sigil_sigma::SigmaEngine;
+use sigil_sigma::{CorrelationEngine, SigmaEngine};
 use sigil_store::Store;
 use tokio::sync::mpsc;
 
@@ -59,12 +59,18 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     }
 
     let index = Arc::new(EventIndex::open(cfg.index.resolved_path())?);
-    let columnar = ColumnarStore::open(
+    let mut columnar = ColumnarStore::open(
         cfg.index.resolved_cold_path(),
         cfg.index.resolved_catalog_path(),
     )?;
+    // Cold object-store archive (DESIGN §7): enables warm→cold migration.
+    if let Some(archive) = ObjectColdStore::from_config(&cfg.cluster.object_store)? {
+        tracing::info!(archive = archive.describe(), "cold archive attached");
+        columnar = columnar.with_archive(archive);
+    }
     let analytics = Analytics::new(cfg.index.resolved_cold_path());
     let retention_micros = parse_duration_micros(&cfg.index.retention.cold);
+    let warm_micros = parse_duration_micros(&cfg.index.retention.warm);
     let normalizer = Normalizer::new(TENANT);
     let enrich_chain = build_enrich_chain(&cfg);
 
@@ -88,6 +94,8 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
     // Detection engine, shared with the API so rule edits take effect live.
     let engine = Arc::new(RwLock::new(build_engine(&cfg)?));
     let engine_len = engine.read().unwrap().len();
+    // Sigma correlation (meta) rules over the live alert stream (DESIGN §8).
+    let correlations = Mutex::new(build_correlations(&cfg)?);
     // Custom detectors evaluated after Sigma on the same detection path.
     let detectors = build_detector_chain(&cfg);
 
@@ -215,7 +223,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
                         for mut event in decode_normalize(&mut codecs, &normalizer, &enrich_chain, &frame)? {
                             event.template_id = Some(miner.mine(&event.message).template_id);
                             if frame.should_sigma {
-                                detect(&engine, &detectors, &event, &alerts, &outputs).await;
+                                detect(&engine, &correlations, &detectors, &event, &alerts, &outputs).await;
                             }
                             if frame.should_index {
                                 index.add(&event)?;
@@ -246,7 +254,7 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
                 if let Some(mut event) = maybe_event {
                     event.template_id = Some(miner.mine(&event.message).template_id);
                     if sigma_active {
-                        detect(&engine, &detectors, &event, &alerts, &outputs).await;
+                        detect(&engine, &correlations, &detectors, &event, &alerts, &outputs).await;
                     }
                     index.add(&event)?;
                     metrics::counter!("sigil_events_indexed_total").increment(1);
@@ -269,9 +277,16 @@ pub async fn run(config_path: &str, api_addr: String) -> Result<()> {
             }
             _ = retention.tick() => {
                 if let Some(max_age) = retention_micros {
-                    let dropped = columnar.enforce_retention(max_age)?;
+                    let dropped = columnar.enforce_retention(max_age).await?;
                     if dropped > 0 {
                         tracing::info!(segments = dropped, "retention dropped expired cold segments");
+                    }
+                }
+                if let Some(warm_age) = warm_micros {
+                    match columnar.migrate_warm(warm_age).await {
+                        Ok(0) => {}
+                        Ok(n) => tracing::info!(segments = n, "migrated warm segments to cold archive"),
+                        Err(e) => tracing::warn!(error = %e, "warm→cold migration failed"),
                     }
                 }
             }
@@ -313,17 +328,30 @@ fn roll(store: &ColumnarStore, buffer: &mut Vec<Event>) -> Result<()> {
     Ok(())
 }
 
-/// Run the Sigma engine + custom detectors over one event, recording +
-/// emitting any alerts. The engine is read-locked briefly (rule edits via the
-/// API take the write lock).
+/// Run the Sigma engine + correlation rules + custom detectors over one
+/// event, recording + emitting any alerts. The engine is read-locked briefly
+/// (rule edits via the API take the write lock). Base alerts referenced by a
+/// non-`generate` correlation rule are suppressed in favor of the aggregate
+/// alert (Sigma meta-rule semantics).
 async fn detect(
     engine: &Arc<RwLock<SigmaEngine>>,
+    correlations: &Mutex<CorrelationEngine>,
     detectors: &DetectorChain,
     event: &Event,
     store: &AlertStore,
     outputs: &Outputs,
 ) {
-    let mut alerts = engine.read().unwrap().eval(event);
+    let base = engine.read().unwrap().eval(event);
+    let mut alerts = {
+        let mut corr = correlations.lock().unwrap();
+        let fired = corr.process(event, &base);
+        let mut kept: Vec<Alert> = base
+            .into_iter()
+            .filter(|a| !corr.suppressed(&a.rule_id))
+            .collect();
+        kept.extend(fired);
+        kept
+    };
     alerts.extend(detectors.eval(event));
     for alert in alerts {
         tracing::info!(
@@ -434,6 +462,23 @@ fn build_engine(cfg: &Config) -> Result<SigmaEngine> {
         tracing::warn!(rule = %path.display(), error = %err, "skipped rule");
     }
     Ok(engine)
+}
+
+/// Build the Sigma *correlation* engine from the same rules dir (correlation
+/// docs are the ones `SigmaEngine::load_dir` skips).
+fn build_correlations(cfg: &Config) -> Result<CorrelationEngine> {
+    let dir = match (&cfg.sigma.enabled, &cfg.sigma.rules_dir) {
+        (true, Some(dir)) => dir,
+        _ => return Ok(CorrelationEngine::default()),
+    };
+    let (correlations, report) = CorrelationEngine::load_dir(dir)?;
+    if report.loaded > 0 {
+        tracing::info!(loaded = report.loaded, dir = %dir, "loaded Sigma correlation rules");
+    }
+    for (path, err) in &report.failed {
+        tracing::warn!(rule = %path.display(), error = %err, "skipped correlation rule");
+    }
+    Ok(correlations)
 }
 
 /// Load the EDR gateway's TLS cert+key from config, if both are set. Returns

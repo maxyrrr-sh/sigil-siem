@@ -19,7 +19,8 @@ pub struct WasmManifest {
     /// Requested capabilities (capability strings, DESIGN §12.2).
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// Optional detached signature (verification is a later step).
+    /// Detached ed25519 signature (hex) over the `.wasm` module bytes,
+    /// verified against the host's [`crate::SignaturePolicy`] trusted keys.
     #[serde(default)]
     pub signature: Option<String>,
 }

@@ -147,32 +147,23 @@ impl SigmaEngine {
             .collect()
     }
 
-    /// Load every `*.yml` / `*.yaml` rule under `dir` (recursively). Individual
-    /// failures are collected in the report rather than aborting the load.
+    /// Load every `*.yml` / `*.yaml` rule under `dir` (recursively). Sigma
+    /// *correlation* docs are skipped (loaded by
+    /// [`crate::CorrelationEngine::load_dir`]); individual failures are
+    /// collected in the report rather than aborting the load.
     pub fn load_dir(dir: impl AsRef<Path>) -> Result<(SigmaEngine, LoadReport)> {
-        let dir = dir.as_ref();
         let mut rules = Vec::new();
         let mut report = LoadReport::default();
-        let mut stack = vec![dir.to_path_buf()];
-        while let Some(path) = stack.pop() {
-            let entries = std::fs::read_dir(&path)
-                .map_err(|e| Error::Io(format!("reading rules dir {}: {e}", path.display())))?;
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else if matches!(p.extension().and_then(|e| e.to_str()), Some("yml" | "yaml")) {
-                    match std::fs::read_to_string(&p)
-                        .map_err(|e| Error::Io(e.to_string()))
-                        .and_then(|t| CompiledRule::compile(&t))
-                    {
-                        Ok(rule) => {
-                            rules.push(rule);
-                            report.loaded += 1;
-                        }
-                        Err(e) => report.failed.push((p, e.to_string())),
-                    }
+        for (path, text) in crate::correlation::yaml_files(dir.as_ref())? {
+            if crate::correlation::is_correlation_doc(&text) {
+                continue;
+            }
+            match CompiledRule::compile(&text) {
+                Ok(rule) => {
+                    rules.push(rule);
+                    report.loaded += 1;
                 }
+                Err(e) => report.failed.push((path, e.to_string())),
             }
         }
         Ok((SigmaEngine::new(rules), report))
@@ -288,7 +279,7 @@ fn condition_to_string(v: &serde_yaml::Value) -> Result<String> {
     }
 }
 
-fn level_to_severity(level: Option<&str>) -> Severity {
+pub(crate) fn level_to_severity(level: Option<&str>) -> Severity {
     match level.map(|s| s.to_ascii_lowercase()).as_deref() {
         Some("informational") => Severity::Informational,
         Some("low") => Severity::Low,
@@ -300,7 +291,7 @@ fn level_to_severity(level: Option<&str>) -> Severity {
 }
 
 /// Extract the first ATT&CK technique tag (`attack.t1110` → `T1110`).
-fn technique_from_tags(tags: &[String]) -> Option<String> {
+pub(crate) fn technique_from_tags(tags: &[String]) -> Option<String> {
     for tag in tags {
         let lower = tag.to_ascii_lowercase();
         if let Some(rest) = lower.strip_prefix("attack.t") {

@@ -5,14 +5,16 @@
 //! - [`transport`] — a [`Transport`] trait with an in-proc bus
 //!   ([`InProcBus`]); Redpanda/Kafka + NATS slot in behind it (ADR-2).
 //! - [`shard`] — [`ShardMap`]: time+hash sharding and node placement.
-//!
-//! Real Raft consensus (`openraft`) for replicating the catalog/membership is
-//! the distributed swap; the shard map + placement logic here is its data model.
+//! - [`raft`] — Raft consensus for the cluster catalog: a deterministic
+//!   [`RaftNode`] state machine + a [`RaftDriver`] that binds it to any
+//!   transport (in-proc for tests/monolith, TCP for real clusters).
 
+pub mod raft;
 pub mod role;
 pub mod shard;
 pub mod transport;
 
+pub use raft::{LogEntry, RaftDriver, RaftNode};
 pub use role::{Role, RoleSet};
 pub use shard::{NodeId, ShardId, ShardMap};
-pub use transport::{build_transport, InProcBus, Transport, TransportKind};
+pub use transport::{build_transport, InProcBus, TcpBus, Transport, TransportKind};

@@ -12,6 +12,13 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tantivy = { workspace = true }
 datafusion = { workspace = true }
+object_store = { workspace = true }
+bytes = { workspace = true }
+serde_yaml = { workspace = true }
+
+[features]
+# S3-compatible archive/cold backend (`object_store: { kind: s3, ... }`).
+s3 = ["object_store/aws"]
 
 [dev-dependencies]
 tempfile = "3"

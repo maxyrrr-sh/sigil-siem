@@ -9,6 +9,7 @@ description = "WASM component host (wasmtime) + WIT (DESIGN section 12)"
 sigil-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ed25519-dalek = { workspace = true }
 # The wasmtime runtime is feature-gated so consumers that only need manifest +
 # capability checking (e.g. the CLI) don't pull in the full engine.
 wasmtime = { version = "46", optional = true }

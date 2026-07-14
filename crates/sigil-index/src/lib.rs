@@ -11,10 +11,12 @@
 pub mod analytics;
 pub mod catalog;
 pub mod columnar;
+pub mod object;
 pub mod store;
 
 pub use analytics::{Analytics, QueryResult};
 pub use catalog::{parse_duration_micros, Catalog, SegmentMeta, Tier};
+pub use object::ObjectColdStore;
 pub use store::ColumnarStore;
 
 use std::path::Path;

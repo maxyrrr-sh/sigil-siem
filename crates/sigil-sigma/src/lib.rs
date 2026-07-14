@@ -8,16 +8,21 @@
 //! Supported today: field selections with `contains`/`startswith`/`endswith`/
 //! `re`/`all` modifiers and `*`/`?` wildcards; keyword selections; list (OR) and
 //! `|all` (AND) values; the `and`/`or`/`not`, `( )`, and `N of <pattern>`
-//! condition grammar; field mapping to OCSF aliases. Not yet: the index-backed
-//! retro-hunt backend, Sigma *correlation* rules, and `base64`/`cidr`/numeric
-//! modifiers (those rules are reported as load failures rather than mis-matched).
+//! condition grammar; field mapping to OCSF aliases; Sigma *correlation*
+//! (meta) rules over sliding windows ([`correlation`]); and the index-backed
+//! retro-hunt backend ([`hunt`]). Not yet: `base64`/`cidr`/numeric modifiers
+//! (those rules are reported as load failures rather than mis-matched).
 
 pub mod condition;
+pub mod correlation;
 pub mod engine;
 pub mod harness;
+pub mod hunt;
 pub mod matcher;
 pub mod rule;
 
+pub use correlation::{CompiledCorrelation, CorrelationEngine, CorrelationRule};
 pub use engine::{CompiledRule, LoadReport, RuleInfo, SigmaEngine};
 pub use harness::{event_from_fields, run_cases, TestCase};
+pub use hunt::{retro_hunt, HuntOutcome};
 pub use rule::{LogSource, SigmaRule};

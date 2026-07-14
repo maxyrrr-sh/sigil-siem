@@ -8,7 +8,9 @@ description = "Roles, transport abstraction, Raft catalog (DESIGN section 4)"
 [dependencies]
 sigil-core = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

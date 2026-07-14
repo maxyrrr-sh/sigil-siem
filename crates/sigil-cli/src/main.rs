@@ -1,7 +1,7 @@
 //! `sigil` — command-line entrypoint for Sigil SIEM.
 //!
-//! Phase 0 wires real `run`, `replay`, and `config validate` subcommands; the
-//! remaining `config` verbs (plan/apply/diff) are still stubs (DESIGN §13.2).
+//! `run`, `replay`, `correlate`, `hunt`, `query`, `cluster`, `plugin`,
+//! `eval`, `config` (validate/plan/apply/diff/schema), `auth`, `edr`.
 
 mod output;
 mod run;
@@ -68,6 +68,24 @@ enum Command {
         #[arg(long, default_value = DEFAULT_CONFIG)]
         config: String,
     },
+    /// Retro-hunt: run Sigma detection + correlation rules over historical
+    /// events already in the columnar store (warm + cold tiers).
+    Hunt {
+        /// Sigma rules directory (defaults to `sigma.rules_dir` from config).
+        #[arg(long)]
+        rules: Option<String>,
+        /// How far back to hunt (e.g. `90m`, `24h`, `7d`).
+        #[arg(long, default_value = "24h")]
+        last: String,
+        /// Window start, epoch micros (overrides --last).
+        #[arg(long)]
+        from: Option<i64>,
+        /// Window end, epoch micros (defaults to now).
+        #[arg(long)]
+        to: Option<i64>,
+        #[arg(long, default_value = DEFAULT_CONFIG)]
+        config: String,
+    },
     /// Run an analytical query over the cold tier (SQL or pipe-DSL).
     Query {
         /// The query text. SQL, or pipe-DSL like `search x | stats count() by host`.
@@ -93,6 +111,9 @@ enum Command {
         /// Seed for the deterministic synthetic scenario.
         #[arg(long, default_value_t = 1)]
         seed: u64,
+        /// Run this many seeds (starting at --seed) and report mean ± 95% CI.
+        #[arg(long, default_value_t = 1)]
+        seeds: u64,
     },
     /// Configuration management (DESIGN §13.2).
     Config {
@@ -185,13 +206,26 @@ enum AuthAction {
 
 #[derive(Subcommand)]
 enum PluginAction {
-    /// Verify a plugin manifest's requested capabilities against a grant list.
+    /// Verify a plugin manifest: capabilities against a grant list, and (with
+    /// --trust) its ed25519 signature over the module bytes.
     Verify {
         /// Path to the plugin manifest (JSON).
         manifest: String,
         /// Granted capability (repeatable), e.g. `--allow read:field:message`.
         #[arg(long = "allow")]
         allow: Vec<String>,
+        /// Trusted publisher public key, hex (repeatable). Enforces signing.
+        #[arg(long = "trust")]
+        trust: Vec<String>,
+    },
+    /// Sign a `.wasm` module with an ed25519 secret key (publisher side);
+    /// prints the hex signature for the manifest's `signature` field.
+    Sign {
+        /// Path to the `.wasm` module.
+        module: String,
+        /// 32-byte ed25519 secret key, hex (e.g. from `openssl rand -hex 32`).
+        #[arg(long)]
+        key: String,
     },
 }
 
@@ -202,18 +236,23 @@ enum ConfigAction {
         #[arg(default_value = DEFAULT_CONFIG)]
         config: String,
     },
-    /// Show the diff between desired and running state (not implemented).
+    /// Show what applying this config would change vs the applied snapshot.
     Plan {
         #[arg(default_value = DEFAULT_CONFIG)]
         config: String,
     },
-    /// Apply configuration (not implemented).
+    /// Record this config as the in-effect snapshot (after validating).
     Apply {
         #[arg(default_value = DEFAULT_CONFIG)]
         config: String,
     },
-    /// Show runtime drift vs declared config (not implemented).
-    Diff,
+    /// Show drift: how the declared file has moved from the applied snapshot.
+    Diff {
+        #[arg(default_value = DEFAULT_CONFIG)]
+        config: String,
+    },
+    /// Print the JSON Schema for the config file (editor/CI integration).
+    Schema,
 }
 
 fn main() -> ExitCode {
@@ -246,6 +285,13 @@ fn dispatch(cli: Cli) -> sigil_core::Result<ExitCode> {
             all_domains,
             config,
         } => cmd_correlate(&file, &codec, window.as_deref(), all_domains, &config),
+        Command::Hunt {
+            rules,
+            last,
+            from,
+            to,
+            config,
+        } => cmd_hunt(rules.as_deref(), &last, from, to, &config),
         Command::Query {
             query,
             lang,
@@ -253,8 +299,13 @@ fn dispatch(cli: Cli) -> sigil_core::Result<ExitCode> {
         } => cmd_query(&query, lang.as_deref(), &config),
         Command::Cluster { config } => cmd_cluster(&config),
         Command::Plugin { action } => cmd_plugin(action),
-        Command::Eval { seed } => {
-            print!("{}", run_eval(&synthetic(seed)));
+        Command::Eval { seed, seeds } => {
+            if seeds > 1 {
+                let scenarios: Vec<_> = (seed..seed + seeds).map(synthetic).collect();
+                print!("{}", sigil_eval::run_eval_multi(&scenarios));
+            } else {
+                print!("{}", run_eval(&synthetic(seed)));
+            }
             Ok(ExitCode::SUCCESS)
         }
         Command::Config { action } => cmd_config(action),
@@ -424,7 +475,11 @@ fn cmd_cluster(config: &str) -> sigil_core::Result<ExitCode> {
 
 fn cmd_plugin(action: PluginAction) -> sigil_core::Result<ExitCode> {
     match action {
-        PluginAction::Verify { manifest, allow } => {
+        PluginAction::Verify {
+            manifest,
+            allow,
+            trust,
+        } => {
             let m = WasmManifest::load(&manifest)?;
             let requested = m.requested_capabilities()?;
             let policy = CapabilityPolicy::from_strings(&allow)?;
@@ -443,16 +498,53 @@ fn cmd_plugin(action: PluginAction) -> sigil_core::Result<ExitCode> {
                     allow.join(", ")
                 }
             );
-            match policy.check(&requested) {
-                Ok(()) => {
-                    println!("result:   OK — all requested capabilities granted");
-                    Ok(ExitCode::SUCCESS)
-                }
-                Err(denied) => {
-                    println!("result:   DENIED — {}", denied.join(", "));
-                    Ok(ExitCode::FAILURE)
-                }
+            if let Err(denied) = policy.check(&requested) {
+                println!("result:   DENIED — {}", denied.join(", "));
+                return Ok(ExitCode::FAILURE);
             }
+            if !trust.is_empty() {
+                let signatures = sigil_plugin_wasm::SignaturePolicy::from_hex_keys(&trust)?;
+                let module_path = m.path.clone().ok_or_else(|| {
+                    sigil_core::Error::Config("manifest has no `path` to a module".into())
+                })?;
+                // `path` is relative to the manifest file.
+                let module_path = std::path::Path::new(&manifest)
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(module_path);
+                let module = std::fs::read(&module_path).map_err(|e| {
+                    sigil_core::Error::Io(format!("reading {}: {e}", module_path.display()))
+                })?;
+                if let Err(e) = signatures.verify(&module, m.signature.as_deref()) {
+                    println!("result:   DENIED — {e}");
+                    return Ok(ExitCode::FAILURE);
+                }
+                println!("result:   OK — capabilities granted, signature trusted");
+            } else {
+                println!("result:   OK — all requested capabilities granted");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        PluginAction::Sign { module, key } => {
+            let bytes = std::fs::read(&module)
+                .map_err(|e| sigil_core::Error::Io(format!("reading {module}: {e}")))?;
+            let key = key.trim();
+            if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(sigil_core::Error::Config(
+                    "--key must be a 32-byte hex secret key".into(),
+                ));
+            }
+            let mut secret = [0u8; 32];
+            for (i, chunk) in secret.iter_mut().enumerate() {
+                *chunk = u8::from_str_radix(&key[i * 2..i * 2 + 2], 16)
+                    .map_err(|_| sigil_core::Error::Config("invalid hex in --key".into()))?;
+            }
+            println!(
+                "signature:  {}",
+                sigil_plugin_wasm::sign_module(&secret, &bytes)
+            );
+            println!("public-key: {}", sigil_plugin_wasm::public_key_hex(&secret));
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -592,6 +684,74 @@ fn cmd_correlate(
     Ok(ExitCode::SUCCESS)
 }
 
+/// Retro-hunt over the columnar store (DESIGN §8 index-backed backend).
+fn cmd_hunt(
+    rules: Option<&str>,
+    last: &str,
+    from: Option<i64>,
+    to: Option<i64>,
+    config: &str,
+) -> sigil_core::Result<ExitCode> {
+    let cfg = Config::load(config)?;
+    let dir = rules
+        .map(str::to_string)
+        .or_else(|| cfg.sigma.rules_dir.clone())
+        .ok_or_else(|| {
+            sigil_core::Error::Config("no rules dir: pass --rules or set sigma.rules_dir".into())
+        })?;
+    let (engine, report) = SigmaEngine::load_dir(&dir)?;
+    let (mut correlations, corr_report) = sigil_sigma::CorrelationEngine::load_dir(&dir)?;
+    println!(
+        "loaded {} detection rule(s), {} correlation rule(s) from {dir}",
+        report.loaded, corr_report.loaded
+    );
+    for (path, err) in report.failed.iter().chain(&corr_report.failed) {
+        eprintln!("  skipped {}: {err}", path.display());
+    }
+
+    let end = to.unwrap_or_else(sigil_core::now_micros);
+    let start = match from {
+        Some(f) => f,
+        None => {
+            let span = parse_duration_micros(last)
+                .ok_or_else(|| sigil_core::Error::Config(format!("bad --last `{last}`")))?;
+            end - span
+        }
+    };
+
+    let mut columnar = ColumnarStore::open(
+        cfg.index.resolved_cold_path(),
+        cfg.index.resolved_catalog_path(),
+    )?;
+    if let Some(archive) = sigil_index::ObjectColdStore::from_config(&cfg.cluster.object_store)? {
+        columnar = columnar.with_archive(archive);
+    }
+    let events = tokio_runtime()?.block_on(columnar.read_range(start, end))?;
+
+    let outcome = sigil_sigma::retro_hunt(&engine, &mut correlations, events);
+    println!(
+        "scanned {} event(s) in window [{start}, {end}]",
+        outcome.scanned
+    );
+    let all = outcome.all_alerts();
+    if all.is_empty() {
+        println!("no matches");
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!("{} alert(s):", all.len());
+    for a in &all {
+        println!(
+            "  [{}] {} severity={:?} technique={} events={}",
+            a.rule_id,
+            a.title,
+            a.severity,
+            a.technique.as_deref().unwrap_or("-"),
+            a.events.len()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn cmd_query(query: &str, lang: Option<&str>, config: &str) -> sigil_core::Result<ExitCode> {
     let cfg = Config::load(config)?;
     let analytics = Analytics::new(cfg.index.resolved_cold_path());
@@ -647,23 +807,43 @@ fn cmd_config(action: ConfigAction) -> sigil_core::Result<ExitCode> {
                 ExitCode::FAILURE
             })
         }
-        ConfigAction::Plan { config } | ConfigAction::Apply { config } => {
-            // Load + validate so at least obvious errors surface today.
-            let (_, report) = Config::load_and_validate(&config)?;
+        ConfigAction::Plan { config } => {
+            let (cfg, report) = Config::load_and_validate(&config)?;
             if !report.ok() {
                 println!("{report}");
                 return Ok(ExitCode::FAILURE);
             }
-            eprintln!(
-                "[scaffold] `config plan/apply` not implemented yet — see docs/DESIGN.md §13.2"
-            );
-            Ok(ExitCode::from(2))
+            print!("{}", cfg.plan(&cfg.resolved_data_dir())?);
+            Ok(ExitCode::SUCCESS)
         }
-        ConfigAction::Diff => {
-            eprintln!(
-                "[scaffold] `config diff` (drift) not implemented yet — see docs/DESIGN.md §13.2"
+        ConfigAction::Apply { config } => {
+            let (cfg, report) = Config::load_and_validate(&config)?;
+            if !report.ok() {
+                println!("{report}");
+                return Ok(ExitCode::FAILURE);
+            }
+            let applied = cfg.apply(&cfg.resolved_data_dir())?;
+            print!("{applied}");
+            println!(
+                "applied; snapshot at {}",
+                sigil_config::plan::snapshot_path(&cfg.resolved_data_dir()).display()
             );
-            Ok(ExitCode::from(2))
+            Ok(ExitCode::SUCCESS)
+        }
+        ConfigAction::Diff { config } => {
+            let cfg = Config::load(&config)?;
+            let drift = cfg.drift(&cfg.resolved_data_dir())?;
+            print!("{drift}");
+            Ok(if drift.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE // non-zero drift → non-zero exit, CI-friendly
+            })
+        }
+        ConfigAction::Schema => {
+            let schema = sigil_config::json_schema();
+            println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
