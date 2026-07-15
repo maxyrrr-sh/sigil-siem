@@ -1,0 +1,166 @@
+---
+# --- obtain the .deb --------------------------------------------------------
+- name: Build the sigil .deb from source
+  when: build_from_source | bool and (sigil_deb_url | length == 0) and (sigil_deb_local_path | length == 0)
+  block:
+    - name: Install build prerequisites
+      ansible.builtin.apt:
+        name: [build-essential, pkg-config, cmake, protobuf-compiler]
+        state: present
+
+    - name: Install rustup + a recent stable toolchain (repo uses edition-2024 deps)
+      ansible.builtin.shell:
+        cmd: "curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+        creates: /root/.rustup/toolchains
+      environment:
+        RUSTUP_HOME: /root/.rustup
+        CARGO_HOME: /root/.cargo
+
+    - name: Install cargo-deb
+      ansible.builtin.shell:
+        cmd: ". /root/.cargo/env && cargo install cargo-deb --locked"
+        creates: /root/.cargo/bin/cargo-deb
+      args:
+        executable: /bin/bash
+
+    - name: Sync the repository source to the target
+      ansible.posix.synchronize:
+        src: "{{ sigil_repo_local }}/"
+        dest: "{{ sigil_src_dir }}/"
+        delete: false
+        rsync_opts:
+          - "--exclude=target"
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=frontend/node_modules"
+          - "--exclude=deploy/prod/certs"
+
+    - name: Build the .deb with the s3 feature
+      ansible.builtin.shell:
+        cmd: ". /root/.cargo/env && cargo deb -p sigil-cli -- --features s3"
+        chdir: "{{ sigil_src_dir }}"
+        executable: /bin/bash
+      register: cargo_deb
+      changed_when: true
+
+    - name: Locate the freshly built .deb
+      ansible.builtin.find:
+        paths: "{{ sigil_src_dir }}/target/debian"
+        patterns: "sigil_*.deb"
+      register: built_debs
+
+    - name: Select the newest built .deb
+      ansible.builtin.set_fact:
+        sigil_deb_target_path: "{{ (built_debs.files | sort(attribute='mtime') | last).path }}"
+
+- name: Download a prebuilt .deb
+  ansible.builtin.get_url:
+    url: "{{ sigil_deb_url }}"
+    dest: /tmp/sigil.deb
+    mode: "0644"
+  when: (sigil_deb_url | length) > 0
+  register: downloaded_deb
+
+- name: Copy a control-node .deb to the target
+  ansible.builtin.copy:
+    src: "{{ sigil_deb_local_path }}"
+    dest: /tmp/sigil.deb
+    mode: "0644"
+  when: (sigil_deb_local_path | length) > 0
+
+- name: Resolve the .deb path to install
+  ansible.builtin.set_fact:
+    sigil_deb_target_path: >-
+      {{ sigil_deb_target_path
+         | default('/tmp/sigil.deb' if (sigil_deb_url | length > 0 or sigil_deb_local_path | length > 0) else '') }}
+
+- name: Fail if no .deb could be obtained
+  ansible.builtin.assert:
+    that: sigil_deb_target_path | length > 0
+    fail_msg: "No sigil .deb: set build_from_source=true, or provide sigil_deb_url / sigil_deb_local_path."
+
+- name: Install the sigil .deb
+  ansible.builtin.apt:
+    deb: "{{ sigil_deb_target_path }}"
+    state: present
+
+# --- configuration ----------------------------------------------------------
+- name: Deploy Sigma detection + correlation rules
+  ansible.builtin.copy:
+    src: "{{ sigil_repo_local }}/configs/rules/"
+    dest: /etc/sigil/rules/
+    owner: root
+    group: sigil
+    mode: "0640"
+    directory_mode: "0750"
+  notify: Restart sigil
+
+- name: Check for a cached admin password hash
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/credentials/sigil_admin_hash"
+  delegate_to: localhost
+  become: false
+  register: hash_cache
+
+- name: Generate the admin password hash (argon2) on the target
+  ansible.builtin.shell:
+    cmd: "set -o pipefail; RUST_LOG=off /usr/bin/sigil auth hash {{ sigil_admin_password | quote }} | grep -m1 '^[$]argon2'"
+    executable: /bin/bash
+  register: gen_hash
+  changed_when: false
+  no_log: true
+  when: not hash_cache.stat.exists
+
+- name: Cache the hash on the control node
+  ansible.builtin.copy:
+    content: "{{ gen_hash.stdout }}\n"
+    dest: "{{ playbook_dir }}/credentials/sigil_admin_hash"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: not hash_cache.stat.exists
+
+- name: Load the admin password hash
+  ansible.builtin.set_fact:
+    sigil_admin_password_hash: "{{ lookup('file', playbook_dir + '/credentials/sigil_admin_hash') }}"
+
+- name: Write the sigil environment file (S3 credentials)
+  ansible.builtin.template:
+    src: sigil.env.j2
+    dest: /etc/sigil/sigil.env
+    owner: root
+    group: sigil
+    mode: "0640"
+  notify: Restart sigil
+
+- name: Write the sigil configuration
+  ansible.builtin.template:
+    src: sigil.yaml.j2
+    dest: /etc/sigil/sigil.yaml
+    owner: sigil
+    group: sigil
+    mode: "0640"
+  notify: Restart sigil
+
+- name: Validate the configuration
+  ansible.builtin.command:
+    cmd: /usr/bin/sigil config validate /etc/sigil/sigil.yaml
+  changed_when: false
+
+- name: Install the sigil systemd unit
+  ansible.builtin.template:
+    src: sigil.service.j2
+    dest: /etc/systemd/system/sigil.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart sigil
+
+- name: Enable and start sigil
+  ansible.builtin.systemd:
+    name: sigil
+    enabled: true
+    state: started
+    daemon_reload: true

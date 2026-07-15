@@ -1,0 +1,69 @@
+---
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+- name: Install a provided TLS certificate
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: sigil
+    mode: "0640"
+  loop:
+    - { src: "{{ tls_cert_src }}", dest: "{{ tls_dir }}/cert.pem" }
+    - { src: "{{ tls_key_src }}", dest: "{{ tls_dir }}/key.pem" }
+  when: (tls_cert_src | length) > 0 and (tls_key_src | length) > 0
+  notify: Reload nginx
+
+- name: Generate a self-signed TLS certificate
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -newkey rsa:2048 -nodes -days 825
+      -keyout {{ tls_dir }}/key.pem -out {{ tls_dir }}/cert.pem
+      -subj "/CN={{ domain }}"
+      -addext "subjectAltName=DNS:{{ domain }},DNS:localhost,IP:127.0.0.1"
+    creates: "{{ tls_dir }}/cert.pem"
+  when: (tls_cert_src | length) == 0 or (tls_key_src | length) == 0
+  notify: Reload nginx
+
+- name: Secure the private key
+  ansible.builtin.file:
+    path: "{{ tls_dir }}/key.pem"
+    owner: root
+    group: sigil
+    mode: "0640"
+
+- name: Deploy the Sigil nginx site
+  ansible.builtin.template:
+    src: sigil.nginx.conf.j2
+    dest: /etc/nginx/sites-available/sigil
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the Sigil site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/sigil
+    dest: /etc/nginx/sites-enabled/sigil
+    state: link
+  notify: Reload nginx
+
+- name: Remove the default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Validate the nginx configuration
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+
+- name: Enable and start nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started

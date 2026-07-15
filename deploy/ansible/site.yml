@@ -1,0 +1,46 @@
+---
+# Sigil SIEM — full native stack on a single Ubuntu 24.04 host.
+#
+#   ansible-galaxy collection install -r requirements.yml
+#   cp inventory.ini.example inventory.ini    # edit host + domain
+#   ansible-playbook site.yml
+#
+# Order matters: the bus/store/sidecar come up before the core, and the edge
+# (nginx) last.
+- name: Deploy Sigil SIEM (native, no Docker)
+  hosts: sigil
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Assert the target is Ubuntu 24.04
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_version is version("24.04", ">=")
+        fail_msg: "This playbook targets Ubuntu 24.04; found {{ ansible_distribution }} {{ ansible_distribution_version }}."
+        quiet: true
+
+  roles:
+    - role: common
+    - role: redpanda
+    - role: minio
+    - role: ml_sidecar
+    - role: sigil
+    - role: frontend
+    - role: nginx
+    - role: prometheus
+      when: install_monitoring | bool
+    - role: grafana
+      when: install_monitoring | bool
+
+  post_tasks:
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Sigil is deployed on {{ inventory_hostname }}."
+          - "Console : https://{{ domain }}/    (self-signed TLS unless you provided a cert)"
+          - "Login   : {{ sigil_admin_user }} / (see credentials/sigil_admin on the control node)"
+          - "Syslog  : udp+tcp :{{ syslog_port }}  (RFC 5424)"
+          - "Grafana : http://127.0.0.1:3000  (loopback — SSH-tunnel it; admin pw in credentials/grafana_admin)"
+          - "Secrets : ./credentials/ on the control node — back these up securely."

@@ -1,0 +1,31 @@
+---
+- name: Install Prometheus
+  ansible.builtin.apt:
+    name: prometheus
+    state: present
+
+- name: Configure Prometheus to scrape sigil
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus
+
+- name: Bind Prometheus to loopback
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus
+    content: |
+      # Managed by Ansible.
+      ARGS="--web.listen-address=127.0.0.1:9090"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus
+
+- name: Enable and start Prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    enabled: true
+    state: started

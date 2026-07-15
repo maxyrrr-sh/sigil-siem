@@ -1,0 +1,57 @@
+---
+# =====================================================================
+# Sigil SIEM — native (no-Docker) full-stack deployment defaults.
+# Override any of these in inventory or an extra vars file.
+# =====================================================================
+
+# --- host / networking ----------------------------------------------
+domain: "{{ ansible_fqdn | default('localhost') }}"
+syslog_port: 5514            # host-facing syslog ingest (udp + tcp)
+sigil_api_addr: "127.0.0.1:8080"   # internal; nginx is the public edge
+
+# --- component toggles ----------------------------------------------
+install_monitoring: true     # prometheus + grafana
+frontend_build: false        # false = ship the repo's prebuilt frontend/dist;
+                             # true  = install Node and rebuild the SPA on host.
+
+# --- sigil .deb source ----------------------------------------------
+# Default: build the .deb from the repo source on the target with cargo-deb.
+# For a "download a released artifact" flow, set build_from_source: false and
+# provide sigil_deb_url (or sigil_deb_local_path, a .deb on the control node).
+build_from_source: true
+sigil_deb_url: ""
+sigil_deb_local_path: ""
+sigil_repo_local: "{{ playbook_dir }}/../.."      # this checkout, on the control node
+sigil_src_dir: /usr/local/src/sigil-siem          # where the source is synced to build
+
+# --- retention (DESIGN §7) ------------------------------------------
+retention_hot: 7d
+retention_warm: 30d
+retention_cold: 365d
+
+# --- object store (MinIO, S3 cold tier) -----------------------------
+minio_bucket: sigil-cold
+minio_binary_url: "https://dl.min.io/server/minio/release/linux-amd64/minio"
+mc_binary_url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+
+# --- pinned external versions ---------------------------------------
+redpanda_setup_url: "https://dl.redpanda.com/nzc4ZYQK3WRGd9sy/redpanda/cfg/setup/bash.deb.sh"
+node_major: "22"             # NodeSource major, only used when frontend_build=true
+
+# --- TLS -------------------------------------------------------------
+# Leave blank for a generated self-signed cert. To use your own, set both to
+# absolute paths of PEM files ON THE CONTROL NODE.
+tls_cert_src: ""
+tls_key_src: ""
+tls_dir: /etc/sigil/tls
+
+# =====================================================================
+# Secrets — generated once and cached under ./credentials/ on the control
+# node (git-ignored). Re-runs reuse them, so services aren't churned.
+# =====================================================================
+sigil_admin_user: admin
+sigil_admin_password: "{{ lookup('password', playbook_dir + '/credentials/sigil_admin chars=ascii_letters,digits length=20') }}"
+sigil_jwt_secret: "{{ lookup('password', playbook_dir + '/credentials/jwt_secret chars=hexdigits length=64') }}"
+minio_root_user: sigil
+minio_root_password: "{{ lookup('password', playbook_dir + '/credentials/minio_root_password chars=ascii_letters,digits length=40') }}"
+grafana_admin_password: "{{ lookup('password', playbook_dir + '/credentials/grafana_admin chars=ascii_letters,digits length=24') }}"

@@ -1,0 +1,74 @@
+---
+- name: Ensure the apt keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Add the Grafana apt key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: "0644"
+
+- name: Add the Grafana apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+
+- name: Install Grafana
+  ansible.builtin.apt:
+    name: grafana
+    state: present
+    update_cache: true
+
+- name: Bind Grafana to loopback
+  community.general.ini_file:
+    path: /etc/grafana/grafana.ini
+    section: server
+    option: http_addr
+    value: "127.0.0.1"
+    mode: "0640"
+    group: grafana
+  notify: Restart grafana
+
+- name: Set the Grafana admin password
+  community.general.ini_file:
+    path: /etc/grafana/grafana.ini
+    section: security
+    option: admin_password
+    value: "{{ grafana_admin_password }}"
+    mode: "0640"
+    group: grafana
+    no_extra_spaces: true
+  no_log: true
+  notify: Restart grafana
+
+- name: Disable anonymous access + sign-up
+  community.general.ini_file:
+    path: /etc/grafana/grafana.ini
+    section: "{{ item.section }}"
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0640"
+    group: grafana
+  loop:
+    - { section: "auth.anonymous", option: "enabled", value: "false" }
+    - { section: "users", option: "allow_sign_up", value: "false" }
+  notify: Restart grafana
+
+- name: Provision the Prometheus datasource
+  ansible.builtin.template:
+    src: datasource.yml.j2
+    dest: /etc/grafana/provisioning/datasources/sigil-prometheus.yml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Enable and start Grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    enabled: true
+    state: started

@@ -1,0 +1,9 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart sigil
+  ansible.builtin.systemd:
+    name: sigil
+    state: restarted

@@ -1,0 +1,28 @@
+# Managed by Ansible — Sigil SIEM core.
+[Unit]
+Description=Sigil SIEM
+Documentation=https://github.com/maxyrrr-sh/sigil-siem
+After=network-online.target redpanda.service minio.service sigil-ml.service
+Wants=network-online.target
+Requires=minio.service
+
+[Service]
+User=sigil
+Group=sigil
+EnvironmentFile=/etc/sigil/sigil.env
+ExecStart=/usr/bin/sigil run --config /etc/sigil/sigil.yaml --api-addr {{ sigil_api_addr }}
+WorkingDirectory=/var/lib/sigil
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# /etc/sigil: the admin `/api/v1/config` save endpoint writes sigil.yaml +
+# a .bak in place; ProtectSystem=strict otherwise mounts it read-only.
+ReadWritePaths=/var/lib/sigil /var/log/sigil /etc/sigil
+
+[Install]
+WantedBy=multi-user.target

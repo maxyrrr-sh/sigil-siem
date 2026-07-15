@@ -1,0 +1,84 @@
+---
+- name: Create the minio system user
+  ansible.builtin.user:
+    name: minio
+    system: true
+    home: /var/lib/minio
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create MinIO data directory
+  ansible.builtin.file:
+    path: /var/lib/minio/data
+    state: directory
+    owner: minio
+    group: minio
+    mode: "0750"
+
+- name: Install the MinIO server binary
+  ansible.builtin.get_url:
+    url: "{{ minio_binary_url }}"
+    dest: /usr/local/bin/minio
+    mode: "0755"
+    force: false
+  notify: Restart minio
+
+- name: Install the MinIO client (mc)
+  ansible.builtin.get_url:
+    url: "{{ mc_binary_url }}"
+    dest: /usr/local/bin/mc
+    mode: "0755"
+    force: false
+
+- name: Write MinIO environment file
+  ansible.builtin.template:
+    src: minio.env.j2
+    dest: /etc/default/minio
+    owner: root
+    group: minio
+    mode: "0640"
+  notify: Restart minio
+
+- name: Install the MinIO systemd unit
+  ansible.builtin.template:
+    src: minio.service.j2
+    dest: /etc/systemd/system/minio.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart minio
+
+# The binary/env/unit tasks above only *notify* a restart, which by default
+# fires at end-of-play. `state: started` below won't restart an already
+# -running minio, so a changed root password wouldn't take effect until
+# long after the mc alias/bucket tasks below already ran against it.
+- name: Apply any pending MinIO restart before talking to it
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start MinIO
+  ansible.builtin.systemd:
+    name: minio
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for the MinIO S3 API to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 9000
+    timeout: 60
+
+- name: Register the local mc alias
+  ansible.builtin.command:
+    cmd: "mc alias set localminio http://127.0.0.1:9000 {{ minio_root_user }} {{ minio_root_password }}"
+  register: mc_alias
+  changed_when: "'added' in mc_alias.stdout or 'updated' in mc_alias.stdout"
+  no_log: true
+
+- name: Create the cold-archive bucket
+  ansible.builtin.command:
+    cmd: "mc mb --ignore-existing localminio/{{ minio_bucket }}"
+  register: mc_mb
+  changed_when: "'created' in (mc_mb.stdout | lower)"

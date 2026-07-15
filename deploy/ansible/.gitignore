@@ -1,0 +1,5 @@
+# Local inventory + generated secrets — never commit these.
+inventories/inventory.yaml
+credentials/*
+!credentials/.gitkeep
+*.retry

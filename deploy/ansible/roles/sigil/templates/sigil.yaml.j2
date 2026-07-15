@@ -1,0 +1,67 @@
+# Managed by Ansible — Sigil SIEM production config (DESIGN §13).
+# Secrets are baked in; this file is 0640 root:sigil. Sigma rules live in
+# /etc/sigil/rules, data in /var/lib/sigil.
+version: 1
+data_dir: /var/lib/sigil/store
+
+auth:
+  enabled: true
+  jwt_secret: "{{ sigil_jwt_secret }}"
+  token_ttl_secs: 28800
+  users:
+    - username: {{ sigil_admin_user }}
+      password_hash: "{{ sigil_admin_password_hash }}"
+      roles: [admin]
+
+cluster:
+  targets: [all]
+  object_store:
+    kind: s3
+    bucket: {{ minio_bucket }}
+    endpoint: http://127.0.0.1:9000
+  transport:
+    kind: redpanda
+    brokers: ["127.0.0.1:9092"]
+
+inputs:
+  - id: syslog_main
+    type: syslog
+    listen: 0.0.0.0:{{ syslog_port }}
+    codec: { type: syslog, rfc: 5424 }
+
+pipelines:
+  - id: default
+    from: [syslog_main]
+    steps:
+      - normalize: { schema: ocsf }
+      - enrich: [redact, entropy]
+    route:
+      - to: index
+      - to: sigma
+      # `correlation` isn't wired into the live `sigil run` ingest path yet
+      # (only reachable via the offline `sigil correlate` subcommand) —
+      # omitted here so config validate doesn't warn about a route that's
+      # a no-op in production.
+
+index:
+  path: /var/lib/sigil/index
+  cold_path: /var/lib/sigil/cold
+  catalog_path: /var/lib/sigil/catalog.json
+  retention: { hot: {{ retention_hot }}, warm: {{ retention_warm }}, cold: {{ retention_cold }} }
+
+sigma:
+  enabled: true
+  rules_dir: /etc/sigil/rules
+  outputs:
+    file: /var/lib/sigil/alerts.jsonl
+
+detectors:
+  - { dga: { threshold: 3.5 } }
+
+correlation:
+  # Placeholder — nothing reads `correlation.*` today (no route feeds it in
+  # the live daemon; use `sigil correlate` offline against exported events).
+  enabled: false
+
+edr:
+  enabled: false

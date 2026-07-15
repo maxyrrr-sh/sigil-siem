@@ -1,0 +1,9 @@
+# Managed by Ansible — scrapes Sigil's Prometheus self-metrics (DESIGN §15).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: sigil
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["{{ sigil_api_addr }}"]

@@ -1,0 +1,21 @@
+# Managed by Ansible — single-node local bus for Sigil (DESIGN §4, ADR-2).
+redpanda:
+  data_directory: /var/lib/redpanda/data
+  seed_servers: []
+  rpc_server:
+    address: 127.0.0.1
+    port: 33145
+  kafka_api:
+    - address: 127.0.0.1
+      port: 9092
+  admin:
+    - address: 127.0.0.1
+      port: 9644
+  # Single unreplicated node — no quorum tuning, tolerate an untuned host.
+  developer_mode: true
+
+rpk:
+  overprovisioned: true
+  tune_aio_events: false
+  tune_clocksource: false
+  tune_ballast_file: false

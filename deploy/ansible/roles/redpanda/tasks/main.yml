@@ -1,0 +1,36 @@
+---
+- name: Add the Redpanda apt repository
+  ansible.builtin.shell:
+    cmd: "curl -1sLf '{{ redpanda_setup_url }}' | bash"
+    creates: /etc/apt/sources.list.d/redpanda-redpanda.list
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Install Redpanda
+  ansible.builtin.apt:
+    name: redpanda
+    state: present
+    update_cache: true
+
+- name: Ensure the Redpanda data directory exists
+  ansible.builtin.file:
+    path: /var/lib/redpanda/data
+    state: directory
+    owner: redpanda
+    group: redpanda
+    mode: "0750"
+
+- name: Configure Redpanda (single-node local bus)
+  ansible.builtin.template:
+    src: redpanda.yaml.j2
+    dest: /etc/redpanda/redpanda.yaml
+    owner: redpanda
+    group: redpanda
+    mode: "0644"
+  notify: Restart redpanda
+
+- name: Enable and start Redpanda
+  ansible.builtin.systemd:
+    name: redpanda
+    enabled: true
+    state: started

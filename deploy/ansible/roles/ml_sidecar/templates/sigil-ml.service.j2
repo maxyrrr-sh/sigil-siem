@@ -1,0 +1,22 @@
+# Managed by Ansible — Sigil ML sidecar (gRPC, DESIGN §9.9).
+[Unit]
+Description=Sigil ML sidecar (gRPC embeddings/scoring)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sigil-ml
+Group=sigil-ml
+WorkingDirectory=/opt/sigil/ml-sidecar
+Environment=SIGIL_PROTO_DIR=/opt/sigil/ml-sidecar/proto
+ExecStart=/opt/sigil/ml-sidecar/venv/bin/python -m sidecar.server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/sigil/ml-sidecar
+
+[Install]
+WantedBy=multi-user.target
