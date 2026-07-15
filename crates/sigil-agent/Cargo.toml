@@ -26,3 +26,19 @@ sysinfo = { workspace = true }
 notify = { workspace = true }
 netstat2 = { workspace = true }
 sha2 = { workspace = true }
+
+[package.metadata.deb]
+name = "sigil-agent"
+maintainer = "Sigil SIEM maintainers"
+copyright = "2026, Sigil SIEM contributors"
+extended-description = """\
+Sigil EDR endpoint agent: cross-platform telemetry collection (process, \
+file, network, persistence) and response actions (isolate, kill, quarantine) \
+for the Sigil SIEM (see docs/EDR.md)."""
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/sigil-agent", "usr/bin/sigil-agent", "755"],
+    ["../../docs/EDR.md", "usr/share/doc/sigil-agent/EDR.md", "644"],
+]

@@ -26,8 +26,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime
 
 # ca-certificates: outbound TLS for the webhook alert sink (rustls).
+# curl: container healthcheck against the /health endpoint (deploy/prod).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home sigil
 
